@@ -1,0 +1,17 @@
+services:
+  processor:
+    build:
+      context: ./docker/processor
+      args:
+        HOST_UID: ${HOST_UID:-1000}
+    image: terraprint/processor:latest
+    profiles:
+      - cli
+    volumes:
+      - ./data:/data
+      - ./scripts:/workspace/scripts:ro
+      - ./configs:/workspace/configs:ro
+      - ~/.config/earthengine:/home/tp/.config/earthengine
+    environment:
+      PYTHONUNBUFFERED: "1"
+    working_dir: /workspace

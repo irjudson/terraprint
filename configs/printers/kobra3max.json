@@ -1,0 +1,18 @@
+{
+    "_printer": "Anycubic Kobra 3 Max",
+    "_build_plate_mm": "400 x 400",
+    "_nozzle_mm": 0.4,
+
+    "tilewidth": 380,
+    "_tip_tilewidth": "400mm bed minus 10mm margin each side.",
+
+    "printres": 0.4,
+    "_tip_printres": "Match nozzle diameter. At 0.4mm and USGS/3DEP/10m data (10m cells), optimal bbox width is ~9.5km for 1:25000 scale (one model pixel = one DEM cell). Wider bboxes coarsen the scale; split into ntilesx/ntilesy to maintain detail over larger areas.",
+
+    "basethick": 2.0,
+    "_tip_basethick": "2mm is sturdy enough for display. Increase to 3-4mm for pieces that will be handled a lot.",
+
+    "_tip_ntiles": "For areas wider than ~10km: set ntilesx/ntilesy to split into multiple 380mm tiles that snap together. Each tile is printed separately at the same scale.",
+
+    "_tip_zscale": "Montana mountains: 1.0-1.5 (high relief, true scale looks good). Rolling terrain: 2.0-3.0. Low relief plains or coastal: 3.0-5.0."
+}

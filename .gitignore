@@ -1,0 +1,14 @@
+data/
+.env
+*.tif
+*.stl
+*.stlb
+*.STL
+*.STLB
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+.vscode/
+.idea/
+docker-compose.override.yml

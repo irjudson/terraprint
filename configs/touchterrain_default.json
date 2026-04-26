@@ -1,0 +1,36 @@
+{
+    "_comment": "Default TouchTerrain processing parameters. Keys prefixed with _ are stripped before passing to TouchTerrain.",
+
+    "tilewidth": 250,
+    "_tip_tilewidth": "Width of each tile in mm. Match your printer's build plate.",
+
+    "ntilesx": 1,
+    "_tip_ntilesx": "Number of tiles in the X (longitude) direction. Increase for large areas.",
+
+    "ntilesy": 1,
+    "_tip_ntilesy": "Number of tiles in the Y (latitude) direction.",
+
+    "basethick": 2.0,
+    "_tip_basethick": "Thickness of the solid base in mm. Minimum 0.5. Thicker = stronger but heavier.",
+
+    "zscale": 1.0,
+    "_tip_zscale": "Vertical exaggeration. 1.0 = true scale. Override with --z-scale or Z_SCALE in .env.",
+
+    "printres": 0.4,
+    "_tip_printres": "Horizontal resolution of the mesh in mm. Match your nozzle diameter (0.4mm is standard FDM).",
+
+    "fileformat": "STLb",
+    "_tip_fileformat": "Output format. STLb = binary STL (compact). STLa = ASCII STL (human-readable but large).",
+
+    "tile_centered": false,
+    "_tip_tile_centered": "If true, each tile is centered at 0,0. If false, tiles are offset for correct relative placement.",
+
+    "no_bottom": false,
+    "_tip_no_bottom": "If true, omit the bottom face (saves filament for display models glued to a surface).",
+
+    "no_normals": false,
+    "_tip_no_normals": "If true, skip face normals in STL output. Most slicers recompute them anyway; skip for smaller files. Set false if your slicer reports non-manifold edges.",
+
+    "smooth_borders": true,
+    "_tip_smooth_borders": "Smooth the tile border edges. Recommended for multi-tile assemblies."
+}
