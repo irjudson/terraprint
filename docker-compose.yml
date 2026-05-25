@@ -25,6 +25,8 @@ services:
       - "${PORT:-8000}:8000"
     environment:
       MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
+    volumes:
+      - /var/run/usbmuxd:/var/run/usbmuxd
     restart: unless-stopped
 
   odm:
