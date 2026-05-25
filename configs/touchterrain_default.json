@@ -22,8 +22,8 @@
     "fileformat": "STLb",
     "_tip_fileformat": "Output format. STLb = binary STL (compact). STLa = ASCII STL (human-readable but large).",
 
-    "tile_centered": false,
-    "_tip_tile_centered": "If true, each tile is centered at 0,0. If false, tiles are offset for correct relative placement.",
+    "tile_centered": true,
+    "_tip_tile_centered": "If true, each tile is centered at 0,0 — correct for single-tile prints; lets slicers auto-place at bed centre. If false, tiles are offset for correct relative placement in multi-tile assemblies.",
 
     "no_bottom": false,
     "_tip_no_bottom": "If true, omit the bottom face (saves filament for display models glued to a surface).",

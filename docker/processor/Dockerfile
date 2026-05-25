@@ -20,6 +20,10 @@ RUN pip install --no-cache-dir \
     "tqdm>=4.66" \
     "earthengine-api>=0.1.380" \
     "trimesh>=4.0" \
+    "pymeshfix>=0.16" \
+    "networkx>=3.0" \
+    "shapely>=2.0" \
+    "mapbox-earcut>=1.0" \
     "git+https://github.com/ChHarding/TouchTerrain_for_CAGEO.git"
 
 RUN useradd -m -u ${HOST_UID} -s /bin/bash tp \

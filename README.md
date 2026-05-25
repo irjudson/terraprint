@@ -1,6 +1,77 @@
 # terraprint
 
-Turn geographic terrain data into 3D-printable STL tiles. Give it a place name, a lat/lon bounding box, or a GeoTIFF you already have — and it produces clean, watertight STL files sized for your printer's build plate. Everything runs in Docker; the only requirement on your machine is Docker and Compose.
+Terraprint is two tools in one:
+
+1. **Mission Planner** — a browser-based PWA for planning drone survey flights. Draw a polygon on a satellite map, tune altitude/overlap/speed, preview the lawnmower path, and push the mission directly to a Skyrover X1 app on your iPhone over USB.
+
+2. **Terrain STL pipeline** — turn geographic terrain data into 3D-printable STL tiles. Give it a place name, a lat/lon bounding box, or a GeoTIFF — it produces clean, watertight STL files sized for your printer's build plate. Everything runs in Docker; the only requirement on your machine is Docker and Compose.
+
+---
+
+## Mission Planner
+
+### Quick start
+
+```bash
+git clone https://github.com/irjudson/terraprint.git
+cd terraprint
+cp .env.example .env
+# Optional: add your Mapbox token to .env for better satellite imagery
+uv sync
+uv run uvicorn web.app:app --reload --host 0.0.0.0 --port 8000
+# open http://localhost:8000
+```
+
+Or with Docker:
+
+```bash
+docker compose up web
+# open http://localhost:8000
+```
+
+Or install as a CLI tool:
+
+```bash
+uv tool install .
+terraprint          # starts the server on port 8000
+```
+
+### Features
+
+- Draw a polygon or rectangle on a satellite map to define the survey area
+- Search for any place by name (Nominatim geocoding)
+- Tune altitude, overlap, front/side overlap independently, and drone speed
+- Preview the lawnmower flight path with start/end markers
+- Stats: waypoint count, distance, estimated flight time
+- Push the generated KMZ mission directly to the **Skyrover iOS app** over USB
+- Metric / imperial units toggle (persists across sessions)
+- PWA — add to home screen on iOS/Android for a native-like experience
+
+### Satellite imagery
+
+By default the planner uses USGS National Map tiles. For higher-resolution imagery, add your free [Mapbox](https://mapbox.com) token:
+
+**Via `.env`** (applies to all users of your instance):
+```bash
+MAPBOX_TOKEN=pk.eyJ1...
+```
+
+**Via the in-app settings** (⚙️ button, stored in browser `localStorage`):
+Paste your token and click Save. This overrides the server default for your browser only.
+
+### Pushing missions to Skyrover (iPhone)
+
+Requirements:
+- iPhone connected via USB, unlocked, and this computer trusted
+- Skyrover app installed and opened at least once
+- At least one waypoint mission saved in the app (so the DB exists)
+- Developer Mode ON: Settings → search "Developer" → Developer Mode → ON
+
+The Push button injects the KMZ directly into the app's SQLite mission database via `pymobiledevice3`. No Wi-Fi, no cloud, no app update needed.
+
+---
+
+## Terrain STL pipeline
 
 ## How it works
 
@@ -170,14 +241,26 @@ terraprint/
 ├── setup.sh                # first-time setup
 ├── ee_auth.sh              # Earth Engine authentication
 ├── test.sh                 # acceptance test suite
+├── pyproject.toml          # uv/pip project (terraprint CLI entry point)
 ├── .env.example
 ├── docker-compose.yml
 ├── docker/
-│   └── processor/
-│       └── Dockerfile
+│   ├── processor/
+│   │   └── Dockerfile      # terrain STL pipeline
+│   └── web/
+│       └── Dockerfile      # mission planner web app
 ├── scripts/
-│   ├── run_touchterrain.py # main pipeline script
-│   └── usgs_dem_fetch.sh   # USGS DEM download helper
+│   ├── run_touchterrain.py    # terrain pipeline script
+│   ├── generate_survey.py     # KMZ waypoint generation
+│   ├── skyrover_ios_bridge.py # CLI iPhone push tool
+│   └── usgs_dem_fetch.sh      # USGS DEM download helper
+├── web/
+│   ├── app.py              # FastAPI backend (mission planner)
+│   └── static/
+│       ├── index.html      # PWA frontend
+│       ├── favicon.svg
+│       ├── manifest.json
+│       └── sw.js
 ├── configs/
 │   ├── touchterrain_default.json
 │   └── printers/

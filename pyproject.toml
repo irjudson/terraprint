@@ -1,0 +1,17 @@
+[project]
+name = "terraprint"
+version = "0.1.0"
+description = "Terrain to STL pipeline with drone survey mission planner"
+requires-python = ">=3.11"
+dependencies = [
+    "pymobiledevice3",
+    "fastapi",
+    "uvicorn[standard]",
+    "shapely",
+]
+
+[project.scripts]
+terraprint = "web.app:serve"
+
+[project.urls]
+Homepage = "https://github.com/irjudson/terraprint"

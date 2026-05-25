@@ -3,8 +3,8 @@
     "_build_plate_mm": "400 x 400",
     "_nozzle_mm": 0.4,
 
-    "tilewidth": 380,
-    "_tip_tilewidth": "400mm bed minus 10mm margin each side.",
+    "tilewidth": 375,
+    "_tip_tilewidth": "400mm bed minus 12.5mm margin each side; keeps the model clear of the OrcaSlicer boundary check.",
 
     "printres": 0.4,
     "_tip_printres": "Match nozzle diameter. At 0.4mm and USGS/3DEP/10m data (10m cells), optimal bbox width is ~9.5km for 1:25000 scale (one model pixel = one DEM cell). Wider bboxes coarsen the scale; split into ntilesx/ntilesy to maintain detail over larger areas.",

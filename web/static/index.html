@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terraprint Mission Planner</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #1a1a2e;
+      --surface: #16213e;
+      --card:    #0f3460;
+      --accent:  #e94560;
+      --green:   #4caf50;
+      --text:    #eaeaea;
+      --muted:   #8899aa;
+      --radius:  8px;
+      --shadow:  0 4px 20px rgba(0,0,0,.5);
+    }
+
+    html, body { height: 100%; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+    #map { position: fixed; inset: 0; z-index: 0; }
+
+    /* ── top bar ── */
+    #topbar {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 1000; display: flex; gap: 8px; width: min(600px, calc(100vw - 24px));
+    }
+    #search {
+      flex: 1; padding: 10px 14px; border: none; border-radius: var(--radius);
+      background: var(--surface); color: var(--text); font-size: 14px;
+      box-shadow: var(--shadow); outline: none;
+    }
+    #search::placeholder { color: var(--muted); }
+    #search-btn {
+      padding: 10px 16px; border: none; border-radius: var(--radius);
+      background: var(--card); color: var(--text); cursor: pointer;
+      box-shadow: var(--shadow); font-size: 16px;
+    }
+    #search-btn:hover { background: var(--accent); }
+
+    /* ── autocomplete ── */
+    #suggestions {
+      position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+      width: min(600px, calc(100vw - 24px)); z-index: 1001;
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden; display: none;
+    }
+    .suggestion {
+      padding: 10px 14px; cursor: pointer; font-size: 13px;
+      border-bottom: 1px solid rgba(255,255,255,.05);
+    }
+    .suggestion:hover { background: var(--card); }
+
+    /* ── left toolbar ── */
+    #toolbar {
+      position: fixed; left: 12px; top: 50%; transform: translateY(-50%);
+      z-index: 1000; display: flex; flex-direction: column; gap: 8px;
+    }
+    .tool-btn {
+      width: 44px; height: 44px; border: none; border-radius: var(--radius);
+      background: var(--surface); color: var(--text); cursor: pointer;
+      font-size: 18px; display: flex; align-items: center; justify-content: center;
+      box-shadow: var(--shadow); transition: background .15s;
+    }
+    .tool-btn:hover { background: var(--card); }
+    .tool-btn.active { background: var(--accent); }
+
+    /* ── bottom panel ── */
+    #bottom {
+      position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 1000; width: min(700px, calc(100vw - 24px));
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); overflow: hidden;
+    }
+    #params {
+      padding: 14px 16px; display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 12px; border-bottom: 1px solid rgba(255,255,255,.06);
+    }
+    .param-group { display: flex; flex-direction: column; gap: 4px; }
+    .param-group label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .param-group input {
+      background: var(--card); border: none; border-radius: 4px;
+      color: var(--text); padding: 6px 8px; font-size: 14px; width: 100%; outline: none;
+    }
+    .param-group input:focus { box-shadow: 0 0 0 2px var(--accent); }
+
+    #actions { display: flex; gap: 8px; padding: 12px 16px; align-items: center; }
+    #stats { flex: 1; font-size: 12px; color: var(--muted); }
+    #stats span { color: var(--text); font-weight: 600; }
+
+    .action-btn {
+      padding: 10px 20px; border: none; border-radius: var(--radius);
+      font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s;
+      white-space: nowrap;
+    }
+    #btn-generate { background: var(--card); color: var(--text); }
+    #btn-generate:hover:not(:disabled) { background: #1a4a80; }
+    #btn-push { background: var(--accent); color: #fff; }
+    #btn-push:hover:not(:disabled) { background: #c73350; }
+    .action-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    /* ── toast ── */
+    #toast {
+      position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+      z-index: 2000; padding: 10px 20px; border-radius: var(--radius);
+      font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .25s;
+      pointer-events: none; white-space: nowrap;
+    }
+    #toast.show { opacity: 1; }
+    #toast.ok  { background: var(--green); color: #fff; }
+    #toast.err { background: var(--accent); color: #fff; }
+    #toast.info { background: var(--card); color: var(--text); }
+
+    /* ── settings panel ── */
+    #settings-panel {
+      position: fixed; left: 68px; top: 50%; transform: translateY(-50%);
+      z-index: 1001; display: none;
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 14px 16px; width: 280px;
+      flex-direction: column; gap: 12px;
+    }
+    #settings-panel.open { display: flex; }
+    .settings-row { display: flex; flex-direction: column; gap: 4px; }
+    .settings-row label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+    .settings-token-row { display: flex; gap: 6px; }
+    .settings-token-row input {
+      flex: 1; background: var(--card); border: none; border-radius: 4px;
+      color: var(--text); padding: 6px 8px; font-size: 13px; outline: none;
+      font-family: monospace;
+    }
+    .settings-token-row input:focus { box-shadow: 0 0 0 2px var(--accent); }
+    #btn-save-token {
+      padding: 6px 12px; border: none; border-radius: 4px;
+      background: var(--accent); color: #fff; font-size: 13px; cursor: pointer;
+    }
+    #btn-save-token:hover { background: #c73350; }
+
+    /* ── name field in topbar when polygon drawn ── */
+    #name-wrap {
+      position: fixed; top: 12px; right: 12px; z-index: 1000; display: none;
+    }
+    #mission-name {
+      padding: 10px 14px; border: none; border-radius: var(--radius);
+      background: var(--surface); color: var(--text); font-size: 14px;
+      box-shadow: var(--shadow); outline: none; width: 200px;
+    }
+    #mission-name::placeholder { color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- Top search bar -->
+<div id="topbar">
+  <input id="search" type="text" placeholder="Search a place…" autocomplete="off">
+  <button id="search-btn" title="Search">🔍</button>
+</div>
+<div id="suggestions"></div>
+
+<!-- Mission name (shown after polygon drawn) -->
+<div id="name-wrap">
+  <input id="mission-name" type="text" placeholder="Mission name…">
+</div>
+
+<!-- Left toolbar -->
+<div id="toolbar">
+  <button class="tool-btn" id="btn-satellite" title="Toggle satellite view">🛰</button>
+  <button class="tool-btn" id="btn-draw" title="Draw polygon">⬡</button>
+  <button class="tool-btn" id="btn-clear" title="Clear polygon">✕</button>
+  <button class="tool-btn" id="btn-units" title="Toggle units">m</button>
+  <button class="tool-btn" id="btn-settings" title="Settings">⚙</button>
+</div>
+
+<!-- Bottom panel: params + actions -->
+<div id="bottom">
+  <div id="params">
+    <div class="param-group">
+      <label>Altitude (m)</label>
+      <input id="p-altitude" type="number" value="80" min="20" max="400">
+    </div>
+    <div class="param-group">
+      <label>Overlap (%)</label>
+      <input id="p-overlap" type="number" value="80" min="30" max="95">
+    </div>
+    <div class="param-group">
+      <label>Speed (m/s)</label>
+      <input id="p-speed" type="number" value="8" min="1" max="15">
+    </div>
+    <div class="param-group">
+      <label>Front overlap (%)</label>
+      <input id="p-front" type="number" placeholder="same" min="30" max="95">
+    </div>
+  </div>
+  <div id="actions">
+    <div id="stats">Draw a polygon to plan a mission.</div>
+    <button class="action-btn" id="btn-generate" disabled>Generate Preview</button>
+    <button class="action-btn" id="btn-push" disabled>📱 Push to Phone</button>
+  </div>
+</div>
+
+<div id="settings-panel">
+  <div class="settings-row">
+    <label>Mapbox token</label>
+    <div class="settings-token-row">
+      <input id="mapbox-token" type="password" placeholder="pk.eyJ1…" autocomplete="off">
+      <button id="btn-save-token">Save</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script>
+// ── Map setup ────────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: false }).setView([45.74, -111.47], 15);
+
+
+
+
+let mapboxToken = localStorage.getItem('mapboxToken') || '';
+function makeMapboxLayer(token) {
+  return L.tileLayer(
+    `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/tiles/256/{z}/{x}/{y}?access_token=${token}`,
+    { attribution: '© <a href="https://mapbox.com">Mapbox</a>', maxNativeZoom: 22, maxZoom: 22 }
+  );
+}
+function makeUsgsLayer() {
+  return L.tileLayer(
+    'https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}',
+    { attribution: 'USGS The National Map', maxNativeZoom: 16, maxZoom: 20 }
+  );
+}
+const esriLayer = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution: '© Esri, Maxar, Earthstar Geographics', maxNativeZoom: 19, maxZoom: 22 }
+);
+const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenTopoMap (CC-BY-SA)', maxNativeZoom: 17, maxZoom: 20,
+});
+
+let satelliteLayer = mapboxToken ? makeMapboxLayer(mapboxToken) : makeUsgsLayer();
+
+// satMode cycles: 'mapbox' → 'esri' → 'topo'
+let satMode = 'mapbox';
+satelliteLayer.addTo(map);
+
+// Pre-fill token input if saved
+if (mapboxToken) document.getElementById('mapbox-token').value = mapboxToken;
+
+const satLayers  = { mapbox: () => satelliteLayer, esri: () => esriLayer, topo: () => topoLayer };
+const satLabels  = { mapbox: '🛰', esri: 'E', topo: '🗻' };
+const satNext    = { mapbox: 'esri', esri: 'topo', topo: 'mapbox' };
+const satTitles  = { mapbox: 'Mapbox satellite → Esri', esri: 'Esri satellite → Topo', topo: 'Topo → Mapbox satellite' };
+
+function updateSatBtn() {
+  const btn = document.getElementById('btn-satellite');
+  btn.textContent = satLabels[satMode];
+  btn.title = satTitles[satMode];
+  btn.classList.add('active');
+}
+updateSatBtn();
+
+document.getElementById('btn-satellite').addEventListener('click', () => {
+  Object.values(satLayers).forEach(fn => { const l = fn(); if (map.hasLayer(l)) map.removeLayer(l); });
+  satMode = satNext[satMode];
+  satLayers[satMode]().addTo(map);
+  updateSatBtn();
+});
+
+// ── Settings panel ────────────────────────────────────────────────────────────
+// Use server-provided Mapbox token if none is stored locally
+if (!mapboxToken) {
+  fetch('/api/config').then(r => r.json()).then(cfg => {
+    if (cfg.mapbox_token) {
+      mapboxToken = cfg.mapbox_token;
+      const wasActive = satMode === 'mapbox';
+      if (wasActive) map.removeLayer(satelliteLayer);
+      satelliteLayer = makeMapboxLayer(mapboxToken);
+      if (wasActive) satelliteLayer.addTo(map);
+    }
+  }).catch(() => {});
+}
+
+document.getElementById('btn-settings').addEventListener('click', () => {
+  document.getElementById('settings-panel').classList.toggle('open');
+});
+document.addEventListener('click', e => {
+  const panel = document.getElementById('settings-panel');
+  const btn   = document.getElementById('btn-settings');
+  if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn)
+    panel.classList.remove('open');
+});
+document.getElementById('btn-save-token').addEventListener('click', () => {
+  const token = document.getElementById('mapbox-token').value.trim();
+  const wasMapbox = satMode === 'mapbox';
+  if (wasMapbox) map.removeLayer(satelliteLayer);
+  if (token) {
+    localStorage.setItem('mapboxToken', token);
+    mapboxToken = token;
+    satelliteLayer = makeMapboxLayer(token);
+    toast('Mapbox satellite activated', 'ok');
+  } else {
+    localStorage.removeItem('mapboxToken');
+    mapboxToken = '';
+    satelliteLayer = makeUsgsLayer();
+    toast('Switched to USGS imagery', 'info');
+  }
+  if (wasMapbox) satelliteLayer.addTo(map);
+  document.getElementById('settings-panel').classList.remove('open');
+});
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+// ── State ────────────────────────────────────────────────────────────────────
+let currentPolygon = null;   // Leaflet layer
+let previewLayer   = null;   // flight path polyline
+let previewMarkers = [];     // start/end dots
+let currentJobId   = null;
+let drawing        = false;
+let units          = localStorage.getItem('units') || 'metric';
+
+function formatDist(meters) {
+  if (units === 'imperial') {
+    const feet = meters * 3.28084;
+    return feet < 5280 ? `${Math.round(feet)} ft` : `${(feet / 5280).toFixed(2)} mi`;
+  }
+  return meters < 1000 ? `${meters} m` : `${(meters / 1000).toFixed(2)} km`;
+}
+function formatTime(seconds) {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60), s = seconds % 60;
+  return s ? `${m}m ${s}s` : `${m} min`;
+}
+
+document.getElementById('btn-units').textContent = units === 'imperial' ? 'ft' : 'm';
+document.getElementById('btn-units').addEventListener('click', () => {
+  units = units === 'metric' ? 'imperial' : 'metric';
+  localStorage.setItem('units', units);
+  document.getElementById('btn-units').textContent = units === 'imperial' ? 'ft' : 'm';
+});
+
+const drawnItems = new L.FeatureGroup().addTo(map);
+
+// ── Leaflet.draw ─────────────────────────────────────────────────────────────
+const drawControl = new L.Control.Draw({
+  draw: {
+    polygon: { shapeOptions: { color: '#e94560', fillOpacity: .15 } },
+    rectangle: { shapeOptions: { color: '#e94560', fillOpacity: .15 } },
+    polyline: false, circle: false, circlemarker: false, marker: false,
+  },
+  edit: { featureGroup: drawnItems },
+});
+
+map.on(L.Draw.Event.CREATED, e => {
+  clearPolygon();
+  currentPolygon = e.layer;
+  drawnItems.addLayer(currentPolygon);
+  document.getElementById('btn-generate').disabled = false;
+  document.getElementById('name-wrap').style.display = 'block';
+  // Auto-populate name if empty
+  const nameEl = document.getElementById('mission-name');
+  if (!nameEl.value.trim()) {
+    const d = new Date();
+    nameEl.value = `Mission ${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  document.getElementById('stats').textContent = 'Polygon ready — click Generate Preview.';
+  drawing = false;
+  document.getElementById('btn-draw').classList.remove('active');
+});
+
+map.on(L.Draw.Event.EDITED, () => {
+  clearPreview();
+  currentJobId = null;
+  document.getElementById('btn-push').disabled = true;
+});
+
+// ── Toolbar ──────────────────────────────────────────────────────────────────
+document.getElementById('btn-draw').addEventListener('click', () => {
+  if (drawing) return;
+  drawing = true;
+  document.getElementById('btn-draw').classList.add('active');
+  map.addControl(drawControl);
+  new L.Draw.Polygon(map, drawControl.options.draw.polygon).enable();
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  clearPolygon();
+  clearPreview();
+  currentJobId = null;
+  document.getElementById('btn-generate').disabled = true;
+  document.getElementById('btn-push').disabled = true;
+  document.getElementById('name-wrap').style.display = 'none';
+  document.getElementById('stats').textContent = 'Draw a polygon to plan a mission.';
+});
+
+function clearPolygon() {
+  if (currentPolygon) { drawnItems.removeLayer(currentPolygon); currentPolygon = null; }
+}
+
+function clearPreview() {
+  if (previewLayer) { map.removeLayer(previewLayer); previewLayer = null; }
+  previewMarkers.forEach(m => map.removeLayer(m));
+  previewMarkers = [];
+}
+
+// ── Search ───────────────────────────────────────────────────────────────────
+const searchEl      = document.getElementById('search');
+const suggestionsEl = document.getElementById('suggestions');
+
+async function doSearch() {
+  const q = searchEl.value.trim();
+  if (!q) return;
+  suggestionsEl.style.display = 'none';
+  try {
+    const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+    const results = await res.json();
+    if (!results.length) { toast('No results found', 'err'); return; }
+    renderSuggestions(results);
+  } catch (e) { toast('Geocode failed', 'err'); }
+}
+
+function renderSuggestions(results) {
+  suggestionsEl.innerHTML = '';
+  results.slice(0, 5).forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'suggestion';
+    div.textContent = r.display_name;
+    div.addEventListener('click', () => {
+      suggestionsEl.style.display = 'none';
+      searchEl.value = r.display_name.split(',')[0].trim();
+
+      const bb = r.boundingbox; // [s, n, w, e]
+      const bounds = [[+bb[0], +bb[2]], [+bb[1], +bb[3]]];
+      map.fitBounds(bounds, { padding: [40, 40] });
+
+      // If Nominatim returned a polygon, draw it as the starting polygon
+      if (r.geojson && (r.geojson.type === 'Polygon' || r.geojson.type === 'MultiPolygon')) {
+        clearPolygon();
+        clearPreview();
+        currentJobId = null;
+        const coords = r.geojson.type === 'Polygon'
+          ? r.geojson.coordinates[0]
+          : r.geojson.coordinates[0][0];
+        const latlngs = coords.map(c => [c[1], c[0]]);
+        currentPolygon = L.polygon(latlngs, { color: '#e94560', fillOpacity: .15 });
+        drawnItems.addLayer(currentPolygon);
+        document.getElementById('btn-generate').disabled = false;
+        document.getElementById('name-wrap').style.display = 'block';
+        document.getElementById('mission-name').value = searchEl.value;
+        document.getElementById('stats').textContent = 'Polygon ready — click Generate Preview.';
+      }
+    });
+    suggestionsEl.appendChild(div);
+  });
+  suggestionsEl.style.display = 'block';
+}
+
+searchEl.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+document.getElementById('search-btn').addEventListener('click', doSearch);
+document.addEventListener('click', e => {
+  if (!suggestionsEl.contains(e.target) && e.target !== searchEl)
+    suggestionsEl.style.display = 'none';
+});
+
+// ── Generate ─────────────────────────────────────────────────────────────────
+document.getElementById('btn-generate').addEventListener('click', async () => {
+  if (!currentPolygon) return;
+
+  const latlngs = currentPolygon.getLatLngs()[0];
+  const polygon = latlngs.map(ll => [ll.lat, ll.lng]);
+  const nameEl = document.getElementById('mission-name');
+  if (!nameEl.value.trim()) {
+    const d = new Date();
+    nameEl.value = `Mission ${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  const name = nameEl.value.trim();
+
+  setGenerating(true);
+  clearPreview();
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        polygon,
+        name,
+        altitude:      +document.getElementById('p-altitude').value,
+        overlap:       +document.getElementById('p-overlap').value,
+        front_overlap: document.getElementById('p-front').value ? +document.getElementById('p-front').value : null,
+        speed:         +document.getElementById('p-speed').value,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { toast(data.detail || 'Generate failed', 'err'); return; }
+
+    currentJobId = data.job_id;
+
+    // Draw flight path
+    const lls = data.waypoints.map(p => [p[0], p[1]]);
+    previewLayer = L.polyline(lls, { color: '#4caf50', weight: 1.5, opacity: .8 }).addTo(map);
+
+    // Add start/end markers (tracked so clearPreview() removes them)
+    previewMarkers.push(
+      L.circleMarker(lls[0], { radius: 6, color: '#4caf50', fillColor: '#4caf50', fillOpacity: 1 }).addTo(map),
+      L.circleMarker(lls[lls.length-1], { radius: 6, color: '#e94560', fillColor: '#e94560', fillOpacity: 1 }).addTo(map)
+    );
+
+    document.getElementById('stats').innerHTML =
+      `<span>${data.waypoint_count}</span> wpts · <span>${formatDist(data.distance_m)}</span> · ~<span>${formatTime(data.est_sec)}</span>`;
+    document.getElementById('btn-push').disabled = false;
+    toast('Preview ready', 'ok');
+  } catch (e) {
+    toast('Request failed', 'err');
+  } finally {
+    setGenerating(false);
+  }
+});
+
+function setGenerating(on) {
+  const btn = document.getElementById('btn-generate');
+  btn.disabled = on;
+  btn.textContent = on ? 'Generating…' : 'Generate Preview';
+}
+
+// ── Push ─────────────────────────────────────────────────────────────────────
+document.getElementById('btn-push').addEventListener('click', async () => {
+  if (!currentJobId) return;
+  const btn = document.getElementById('btn-push');
+  btn.disabled = true;
+  btn.textContent = 'Pushing…';
+  toast('Pushing to phone…', 'info');
+
+  try {
+    const res = await fetch(`/api/push/${currentJobId}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { toast(data.detail || 'Push failed', 'err'); return; }
+    toast(`✓ "${data.name}" pushed to Skyrover`, 'ok');
+  } catch (e) {
+    toast('Push failed — is the phone plugged in?', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📱 Push to Phone';
+  }
+});
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+let _toastTimer;
+function toast(msg, type = 'info') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `show ${type}`;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>
