@@ -169,7 +169,61 @@ def lawnmower_grid(
 # WPML XML generation
 # ---------------------------------------------------------------------------
 
-def _waylines_wpml(waypoints: list[tuple[float, float]], altitude_m: float, speed_ms: float) -> str:
+def _gimbal_rotate_action(action_id: int, pitch_deg: float) -> list[str]:
+    """Return WPML XML lines for a gimbalRotate action at the given pitch."""
+    return [
+        f'        <wpml:action>',
+        f'          <wpml:actionId>{action_id}</wpml:actionId>',
+        f'          <wpml:actionActuatorFunc>gimbalRotate</wpml:actionActuatorFunc>',
+        f'          <wpml:actionActuatorFuncParam>',
+        f'            <wpml:gimbalHeadingYawBase>aircraft</wpml:gimbalHeadingYawBase>',
+        f'            <wpml:gimbalRotateMode>absoluteAngle</wpml:gimbalRotateMode>',
+        f'            <wpml:gimbalPitchRotateEnable>1</wpml:gimbalPitchRotateEnable>',
+        f'            <wpml:gimbalPitchRotateAngle>{pitch_deg:.1f}</wpml:gimbalPitchRotateAngle>',
+        f'            <wpml:gimbalRollRotateEnable>0</wpml:gimbalRollRotateEnable>',
+        f'            <wpml:gimbalRollRotateAngle>0</wpml:gimbalRollRotateAngle>',
+        f'            <wpml:gimbalYawRotateEnable>0</wpml:gimbalYawRotateEnable>',
+        f'            <wpml:gimbalYawRotateAngle>0</wpml:gimbalYawRotateAngle>',
+        f'            <wpml:focusX>0</wpml:focusX>',
+        f'            <wpml:focusY>0</wpml:focusY>',
+        f'            <wpml:focusRegionWidth>0</wpml:focusRegionWidth>',
+        f'            <wpml:focusRegionHeight>0</wpml:focusRegionHeight>',
+        f'            <wpml:gimbalRotateTimeEnable>0</wpml:gimbalRotateTimeEnable>',
+        f'            <wpml:gimbalRotateTime>0</wpml:gimbalRotateTime>',
+        f'            <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>',
+        f'          </wpml:actionActuatorFuncParam>',
+        f'        </wpml:action>',
+    ]
+
+
+def _heading_param(heading_mode: str, fixed_heading: float) -> list[str]:
+    if heading_mode == "fixed":
+        return [
+            '      <wpml:waypointHeadingParam>',
+            '        <wpml:waypointHeadingMode>fixed</wpml:waypointHeadingMode>',
+            f'        <wpml:waypointHeadingAngle>{fixed_heading:.0f}</wpml:waypointHeadingAngle>',
+            '      </wpml:waypointHeadingParam>',
+        ]
+    return [
+        '      <wpml:waypointHeadingParam>',
+        '        <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>',
+        '      </wpml:waypointHeadingParam>',
+    ]
+
+
+def _waylines_wpml(
+    waypoints: list[tuple[float, float]],
+    altitude_m: float,
+    speed_ms: float,
+    gimbal_pitch: float = -90.0,
+    heading_mode: str = "followWayline",
+    fixed_heading: float = 0.0,
+) -> str:
+    """
+    gimbal_pitch: -90=nadir, -45=45° oblique.
+    heading_mode: "followWayline" or "fixed".
+    fixed_heading: compass bearing (0=N, 90=E, 180=S, 270=W), only used when heading_mode="fixed".
+    """
     now_ms = int(time.time() * 1000)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -193,30 +247,32 @@ def _waylines_wpml(waypoints: list[tuple[float, float]], altitude_m: float, spee
     ]
 
     for idx, (lat, lon) in enumerate(waypoints):
-        action_group_id = idx
         lines += [
             '    <Placemark>',
             f'      <Point><coordinates>{lon:.8f},{lat:.8f},0</coordinates></Point>',
             f'      <wpml:index>{idx}</wpml:index>',
             f'      <wpml:executeHeight>{altitude_m:.1f}</wpml:executeHeight>',
             f'      <wpml:waypointSpeed>{speed_ms:.1f}</wpml:waypointSpeed>',
-            '      <wpml:waypointHeadingParam>',
-            '        <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>',
-            '      </wpml:waypointHeadingParam>',
+        ]
+        lines += _heading_param(heading_mode, fixed_heading)
+        lines += [
             '      <wpml:waypointTurnParam>',
             '        <wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode>',
             '        <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>',
             '      </wpml:waypointTurnParam>',
             f'      <wpml:actionGroup>',
-            f'        <wpml:actionGroupId>{action_group_id}</wpml:actionGroupId>',
+            f'        <wpml:actionGroupId>{idx}</wpml:actionGroupId>',
             f'        <wpml:actionGroupStartIndex>{idx}</wpml:actionGroupStartIndex>',
             f'        <wpml:actionGroupEndIndex>{idx}</wpml:actionGroupEndIndex>',
             '        <wpml:actionGroupMode>sequence</wpml:actionGroupMode>',
             '        <wpml:actionTrigger>',
             '          <wpml:actionTriggerType>reachPoint</wpml:actionTriggerType>',
             '        </wpml:actionTrigger>',
+        ]
+        lines += _gimbal_rotate_action(0, gimbal_pitch)
+        lines += [
             '        <wpml:action>',
-            '          <wpml:actionId>0</wpml:actionId>',
+            '          <wpml:actionId>1</wpml:actionId>',
             '          <wpml:actionActuatorFunc>takePhoto</wpml:actionActuatorFunc>',
             '          <wpml:actionActuatorFuncParam>',
             '            <wpml:payloadPositionIndex>0</wpml:payloadPositionIndex>',
@@ -234,7 +290,14 @@ def _waylines_wpml(waypoints: list[tuple[float, float]], altitude_m: float, spee
     return "\n".join(lines)
 
 
-def _template_kml(waypoints: list[tuple[float, float]], altitude_m: float, speed_ms: float) -> str:
+def _template_kml(
+    waypoints: list[tuple[float, float]],
+    altitude_m: float,
+    speed_ms: float,
+    gimbal_pitch: float = -90.0,
+    heading_mode: str = "followWayline",
+    fixed_heading: float = 0.0,
+) -> str:
     now_ms = int(time.time() * 1000)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -275,9 +338,9 @@ def _template_kml(waypoints: list[tuple[float, float]], altitude_m: float, speed
             f'      <wpml:index>{idx}</wpml:index>',
             f'      <wpml:executeHeight>{altitude_m:.1f}</wpml:executeHeight>',
             f'      <wpml:waypointSpeed>{speed_ms:.1f}</wpml:waypointSpeed>',
-            '      <wpml:waypointHeadingParam>',
-            '        <wpml:waypointHeadingMode>followWayline</wpml:waypointHeadingMode>',
-            '      </wpml:waypointHeadingParam>',
+        ]
+        lines += _heading_param(heading_mode, fixed_heading)
+        lines += [
             '      <wpml:waypointTurnParam>',
             '        <wpml:waypointTurnMode>toPointAndStopWithDiscontinuityCurvature</wpml:waypointTurnMode>',
             '        <wpml:waypointTurnDampingDist>0</wpml:waypointTurnDampingDist>',
@@ -298,12 +361,57 @@ def make_kmz(
     altitude_m: float,
     speed_ms: float,
     out_path: Path,
+    gimbal_pitch: float = -90.0,
+    heading_mode: str = "followWayline",
+    fixed_heading: float = 0.0,
 ) -> None:
-    template = _template_kml(waypoints, altitude_m, speed_ms)
-    waylines = _waylines_wpml(waypoints, altitude_m, speed_ms)
+    template = _template_kml(waypoints, altitude_m, speed_ms, gimbal_pitch, heading_mode, fixed_heading)
+    waylines = _waylines_wpml(waypoints, altitude_m, speed_ms, gimbal_pitch, heading_mode, fixed_heading)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("wpmz/template.kml", template)
         zf.writestr("wpmz/waylines.wpml", waylines)
+
+
+# Nadir + four cardinal-direction oblique passes for full 3D reconstruction.
+# The oblique_pitch angle is shared by all four oblique passes; nadir is always -90.
+PHOTOGRAMMETRY_PASSES = [
+    {"name": "nadir", "gimbal": -90.0, "heading_mode": "followWayline", "heading": 0,   "color": "#4caf50"},
+    {"name": "north", "gimbal": -45.0, "heading_mode": "fixed",         "heading": 0,   "color": "#00bcd4"},
+    {"name": "east",  "gimbal": -45.0, "heading_mode": "fixed",         "heading": 90,  "color": "#ff9800"},
+    {"name": "south", "gimbal": -45.0, "heading_mode": "fixed",         "heading": 180, "color": "#9c27b0"},
+    {"name": "west",  "gimbal": -45.0, "heading_mode": "fixed",         "heading": 270, "color": "#ffeb3b"},
+]
+
+
+def make_photogrammetry_missions(
+    waypoints: list[tuple[float, float]],
+    altitude_m: float,
+    speed_ms: float,
+    out_dir: Path,
+    name_stem: str,
+    oblique_pitch: float = -45.0,
+) -> list[dict]:
+    """Generate 5 KMZ files (nadir + N/E/S/W obliques) for photogrammetry reconstruction.
+
+    Returns a list of dicts with keys: pass, kmz_path, gimbal, heading, color.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    results = []
+    for p in PHOTOGRAMMETRY_PASSES:
+        pitch = -90.0 if p["name"] == "nadir" else oblique_pitch
+        kmz_path = out_dir / f"{name_stem}_{p['name']}.kmz"
+        make_kmz(waypoints, altitude_m, speed_ms, kmz_path,
+                 gimbal_pitch=pitch,
+                 heading_mode=p["heading_mode"],
+                 fixed_heading=p["heading"])
+        results.append({
+            "pass":     p["name"],
+            "kmz_path": str(kmz_path),
+            "gimbal":   pitch,
+            "heading":  p["heading"],
+            "color":    p["color"],
+        })
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +443,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"Camera horizontal FOV in degrees (default: {DEFAULT_HFOV}, X1 wide lens).")
     p.add_argument("--vfov", type=float, default=DEFAULT_VFOV, metavar="DEG",
                    help=f"Camera vertical FOV in degrees (default: {DEFAULT_VFOV}, 4:3 photo mode).")
+    p.add_argument("--gimbal-pitch", type=float, default=-90.0, metavar="DEG",
+                   help="Gimbal pitch in degrees: -90=nadir, -45=oblique (default: -90).")
     p.add_argument("--out", required=True, metavar="DIR",
                    help="Output directory for the .kmz file.")
     p.add_argument("--name", default=None, metavar="NAME",
@@ -386,15 +496,23 @@ def main() -> None:
         print(f"WARNING: {len(waypoints):,} waypoints — plan for ~{batteries} battery swaps.\n")
 
     out_path = out_dir / f"{name}.kmz"
-    make_kmz(waypoints, args.altitude, args.speed, out_path)
+    make_kmz(waypoints, args.altitude, args.speed, out_path, args.gimbal_pitch)
 
     track_spacing_m = fp_w * (1 - side_overlap / 100)
     along_spacing_m = fp_h * (1 - front_overlap / 100)
     est_minutes = len(waypoints) * (along_spacing_m / args.speed) / 60
 
+    # GSD: ground sample distance at nadir; oblique coverage scales with 1/cos(pitch)
+    sensor_w_mm = 6.3   # Skyrover X1 / Mini 4 Pro sensor width (mm)
+    image_w_px  = 4032  # native photo resolution width
+    gsd_cm = (args.altitude * sensor_w_mm) / (image_w_px * (args.hfov / 57.3) / 2) * 100 / args.altitude
+    # simpler: gsd_cm = footprint_width_m / image_width_px * 100
+    gsd_cm = (fp_w / image_w_px) * 100
+
     print(f"Area       : {area_w_m:.0f} m × {area_h_m:.0f} m")
     print(f"Altitude   : {args.altitude:.0f} m AGL")
-    print(f"Footprint  : {fp_w:.0f} m × {fp_h:.0f} m per photo")
+    print(f"Gimbal     : {args.gimbal_pitch:.0f}° ({'nadir' if args.gimbal_pitch <= -85 else 'oblique'})")
+    print(f"GSD        : ~{gsd_cm:.1f} cm/px  ({fp_w:.0f} m × {fp_h:.0f} m footprint)")
     print(f"Track spac : {track_spacing_m:.0f} m  ({side_overlap:.0f}% side overlap)")
     print(f"Along spac : {along_spacing_m:.0f} m  ({front_overlap:.0f}% front overlap)")
     print(f"Waypoints  : {len(waypoints)}")

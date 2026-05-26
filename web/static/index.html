@@ -79,9 +79,21 @@
       background: var(--surface); border-radius: var(--radius);
       box-shadow: var(--shadow); overflow: hidden;
     }
+    #mission-type-row {
+      padding: 10px 16px 0; display: flex; gap: 8px; align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,.04);
+    }
+    .mode-btn {
+      padding: 6px 14px; border: none; border-radius: var(--radius);
+      font-size: 12px; font-weight: 600; cursor: pointer;
+      background: var(--card); color: var(--muted); transition: all .15s;
+    }
+    .mode-btn.active { background: var(--accent); color: #fff; }
+    #mode-hint { font-size: 11px; color: var(--muted); padding-left: 4px; }
+
     #params {
       padding: 14px 16px; display: grid;
-      grid-template-columns: 1fr 1fr 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr 1fr 1fr;
       gap: 12px; border-bottom: 1px solid rgba(255,255,255,.06);
     }
     .param-group { display: flex; flex-direction: column; gap: 4px; }
@@ -180,8 +192,22 @@
   <button class="tool-btn" id="btn-settings" title="Settings">⚙</button>
 </div>
 
+<!-- Pass legend (shown after photogrammetry preview) -->
+<div id="pass-legend" style="
+  position:fixed; right:12px; top:60px; z-index:1000;
+  background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow);
+  padding:10px 14px; display:none; flex-direction:column; gap:6px; min-width:140px;
+">
+  <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Passes</div>
+</div>
+
 <!-- Bottom panel: params + actions -->
 <div id="bottom">
+  <div id="mission-type-row">
+    <button class="mode-btn active" id="btn-mode-survey">Survey</button>
+    <button class="mode-btn" id="btn-mode-photo">Photogrammetry (5-pass)</button>
+    <span id="mode-hint">Nadir + N/E/S/W obliques at 45° for full 3D reconstruction</span>
+  </div>
   <div id="params">
     <div class="param-group">
       <label>Altitude (m)</label>
@@ -198,6 +224,15 @@
     <div class="param-group">
       <label>Front overlap (%)</label>
       <input id="p-front" type="number" placeholder="same" min="30" max="95">
+    </div>
+    <div class="param-group" id="gimbal-group">
+      <label>Camera angle</label>
+      <select id="p-gimbal" style="background:var(--card);border:none;border-radius:4px;color:var(--text);padding:6px 8px;font-size:14px;width:100%;outline:none;cursor:pointer;">
+        <option value="-90">Nadir (↓)</option>
+        <option value="-60">High oblique (30°)</option>
+        <option value="-45">Oblique (45°)</option>
+        <option value="-30">Low oblique (60°)</option>
+      </select>
     </div>
   </div>
   <div id="actions">
@@ -324,10 +359,11 @@ L.control.zoom({ position: 'bottomright' }).addTo(map);
 
 // ── State ────────────────────────────────────────────────────────────────────
 let currentPolygon = null;   // Leaflet layer
-let previewLayer   = null;   // flight path polyline
+let previewLayers  = [];     // flight path polylines (one per pass)
 let previewMarkers = [];     // start/end dots
 let currentJobId   = null;
 let drawing        = false;
+let missionMode    = 'survey';
 let units          = localStorage.getItem('units') || 'metric';
 
 function formatDist(meters) {
@@ -409,10 +445,28 @@ function clearPolygon() {
 }
 
 function clearPreview() {
-  if (previewLayer) { map.removeLayer(previewLayer); previewLayer = null; }
+  previewLayers.forEach(l => map.removeLayer(l));
+  previewLayers = [];
   previewMarkers.forEach(m => map.removeLayer(m));
   previewMarkers = [];
+  document.getElementById('pass-legend').style.display = 'none';
 }
+
+// ── Mission type toggle ────────────────────────────────────────────────────
+document.getElementById('btn-mode-survey').addEventListener('click', () => {
+  missionMode = 'survey';
+  document.getElementById('btn-mode-survey').classList.add('active');
+  document.getElementById('btn-mode-photo').classList.remove('active');
+  document.getElementById('mode-hint').textContent = '';
+  document.getElementById('gimbal-group').style.display = '';
+});
+document.getElementById('btn-mode-photo').addEventListener('click', () => {
+  missionMode = 'photogrammetry';
+  document.getElementById('btn-mode-photo').classList.add('active');
+  document.getElementById('btn-mode-survey').classList.remove('active');
+  document.getElementById('mode-hint').textContent = 'Nadir + N/E/S/W obliques — oblique angle set by Camera angle below';
+  document.getElementById('gimbal-group').style.display = '';
+});
 
 // ── Search ───────────────────────────────────────────────────────────────────
 const searchEl      = document.getElementById('search');
@@ -500,6 +554,8 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
         overlap:       +document.getElementById('p-overlap').value,
         front_overlap: document.getElementById('p-front').value ? +document.getElementById('p-front').value : null,
         speed:         +document.getElementById('p-speed').value,
+        gimbal_pitch:  +document.getElementById('p-gimbal').value,
+        mission_mode:  missionMode,
       }),
     });
     const data = await res.json();
@@ -507,18 +563,28 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
 
     currentJobId = data.job_id;
 
-    // Draw flight path
-    const lls = data.waypoints.map(p => [p[0], p[1]]);
-    previewLayer = L.polyline(lls, { color: '#4caf50', weight: 1.5, opacity: .8 }).addTo(map);
+    // Draw all passes with their colors
+    const legend = document.getElementById('pass-legend');
+    legend.innerHTML = '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Passes</div>';
+    data.passes.forEach(pass => {
+      const lls = pass.waypoints.map(p => [p[0], p[1]]);
+      const layer = L.polyline(lls, { color: pass.color, weight: 1.5, opacity: .75 }).addTo(map);
+      previewLayers.push(layer);
+      previewMarkers.push(
+        L.circleMarker(lls[0],           { radius: 5, color: pass.color, fillColor: pass.color, fillOpacity: 1 }).addTo(map),
+        L.circleMarker(lls[lls.length-1],{ radius: 5, color: '#e94560',  fillColor: '#e94560',  fillOpacity: 1 }).addTo(map)
+      );
+      const passLabel = pass.pass === 'nadir' ? 'Nadir ↓'
+        : pass.pass.charAt(0).toUpperCase() + pass.pass.slice(1) + ` oblique (${Math.abs(pass.gimbal)}°)`;
+      legend.innerHTML += `<div style="font-size:12px;display:flex;align-items:center;gap:6px;">
+        <span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${pass.color}"></span>
+        ${passLabel}</div>`;
+    });
+    if (data.passes.length > 1) legend.style.display = 'flex';
 
-    // Add start/end markers (tracked so clearPreview() removes them)
-    previewMarkers.push(
-      L.circleMarker(lls[0], { radius: 6, color: '#4caf50', fillColor: '#4caf50', fillOpacity: 1 }).addTo(map),
-      L.circleMarker(lls[lls.length-1], { radius: 6, color: '#e94560', fillColor: '#e94560', fillOpacity: 1 }).addTo(map)
-    );
-
+    const modeLabel  = data.mode === 'photogrammetry' ? `${data.passes.length}-pass photo` : 'survey';
     document.getElementById('stats').innerHTML =
-      `<span>${data.waypoint_count}</span> wpts · <span>${formatDist(data.distance_m)}</span> · ~<span>${formatTime(data.est_sec)}</span>`;
+      `<span>${data.waypoint_count}</span> wpts · <span>${formatDist(data.distance_m)}</span> · ~<span>${formatTime(data.est_sec)}</span> · GSD <span>${data.gsd_cm} cm/px</span> · <span>${modeLabel}</span>`;
     document.getElementById('btn-push').disabled = false;
     toast('Preview ready', 'ok');
   } catch (e) {
@@ -546,7 +612,8 @@ document.getElementById('btn-push').addEventListener('click', async () => {
     const res = await fetch(`/api/push/${currentJobId}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { toast(data.detail || 'Push failed', 'err'); return; }
-    toast(`✓ "${data.name}" pushed to Skyrover`, 'ok');
+    const countLabel = data.count > 1 ? `${data.count} passes` : `"${data.name}"`;
+    toast(`✓ ${countLabel} pushed to Skyrover`, 'ok');
   } catch (e) {
     toast('Push failed — is the phone plugged in?', 'err');
   } finally {

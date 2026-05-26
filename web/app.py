@@ -22,7 +22,8 @@ from shapely.geometry import Point, Polygon as SPolygon
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 from generate_survey import (
     DEFAULT_ALT, DEFAULT_HFOV, DEFAULT_OVERLAP, DEFAULT_SPEED, DEFAULT_VFOV,
-    camera_footprint, lawnmower_grid, make_kmz,
+    PHOTOGRAMMETRY_PASSES,
+    camera_footprint, lawnmower_grid, make_kmz, make_photogrammetry_missions,
 )
 
 app = FastAPI(title="Terraprint Mission Planner")
@@ -41,6 +42,8 @@ class SurveyRequest(BaseModel):
     front_overlap: Optional[float] = None
     side_overlap: Optional[float] = None
     speed: float = DEFAULT_SPEED
+    gimbal_pitch: float = -90.0         # degrees: -90=nadir, -45=oblique
+    mission_mode: str = "survey"        # "survey" or "photogrammetry"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -120,33 +123,91 @@ async def generate(req: SurveyRequest):
         raise HTTPException(400, f"{len(waypoints):,} waypoints exceeds the 65,535 limit. "
                                   "Reduce area, lower overlap, or increase altitude.")
 
-    # Write KMZ to a temp file kept for push
-    tmp = tempfile.NamedTemporaryFile(suffix=".kmz", delete=False, prefix="tp_")
-    tmp_path = Path(tmp.name)
-    tmp.close()
-    make_kmz(waypoints, req.altitude, req.speed, tmp_path)
-
-    # Stats
+    # Shared stats
+    fp_w, fp_h = camera_footprint(req.altitude, DEFAULT_HFOV, DEFAULT_VFOV)
+    along_m = fp_h * (1 - front_ov / 100)
+    est_sec_per_pass = int(len(waypoints) * along_m / req.speed)
     dist_m = sum(
         _haversine_m(waypoints[i][0], waypoints[i][1],
                      waypoints[i+1][0], waypoints[i+1][1])
         for i in range(len(waypoints) - 1)
     )
-    fp_w, fp_h = camera_footprint(req.altitude, DEFAULT_HFOV, DEFAULT_VFOV)
-    along_m = fp_h * (1 - front_ov / 100)
-    est_sec = int(len(waypoints) * along_m / req.speed)
-
+    IMAGE_W_PX = 4032
+    gsd_cm = round((fp_w / IMAGE_W_PX) * 100, 1)
     job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"kmz_path": str(tmp_path), "name": req.name,
-                     "waypoints": waypoints}
 
+    if req.mission_mode == "photogrammetry":
+        tmp_dir = Path(tempfile.mkdtemp(prefix="tp_photo_"))
+        passes = make_photogrammetry_missions(
+            waypoints, req.altitude, req.speed, tmp_dir, "mission",
+            oblique_pitch=req.gimbal_pitch if req.gimbal_pitch != -90.0 else -45.0,
+        )
+        _jobs[job_id] = {"mode": "photogrammetry", "name": req.name, "passes": passes}
+        n_passes = len(passes)
+        return {
+            "job_id":         job_id,
+            "mode":           "photogrammetry",
+            "passes":         [{"pass": p["pass"], "waypoints": waypoints,
+                                "gimbal": p["gimbal"], "color": p["color"]} for p in passes],
+            "waypoint_count": len(waypoints) * n_passes,
+            "distance_m":     round(dist_m * n_passes),
+            "est_sec":        est_sec_per_pass * n_passes,
+            "gsd_cm":         gsd_cm,
+        }
+
+    # Single-pass survey mode
+    tmp = tempfile.NamedTemporaryFile(suffix=".kmz", delete=False, prefix="tp_")
+    tmp_path = Path(tmp.name)
+    tmp.close()
+    make_kmz(waypoints, req.altitude, req.speed, tmp_path, req.gimbal_pitch)
+    _jobs[job_id] = {"mode": "survey", "kmz_path": str(tmp_path),
+                     "name": req.name, "waypoints": waypoints}
     return {
         "job_id":         job_id,
-        "waypoints":      waypoints,
+        "mode":           "survey",
+        "passes":         [{"pass": "nadir", "waypoints": waypoints,
+                            "gimbal": req.gimbal_pitch, "color": "#4caf50"}],
         "waypoint_count": len(waypoints),
         "distance_m":     round(dist_m),
-        "est_sec":        est_sec,
+        "est_sec":        est_sec_per_pass,
+        "gsd_cm":         gsd_cm,
+        "gimbal_pitch":   req.gimbal_pitch,
     }
+
+
+def _db_insert_mission(con: sqlite3.Connection, container_uuid: str,
+                       mission_id: str, name: str, waypoints: list, kmz_bytes: bytes,
+                       mission_root: str) -> str:
+    """Insert one mission row and return the absolute KMZ path (for use by the caller)."""
+    lats  = [p[0] for p in waypoints]
+    lons  = [p[1] for p in waypoints]
+    dist  = sum(
+        _haversine_m(waypoints[i][0], waypoints[i][1],
+                     waypoints[i+1][0], waypoints[i+1][1])
+        for i in range(len(waypoints) - 1)
+    )
+    abs_path = (f"/var/mobile/Containers/Data/Application/{container_uuid}"
+                f"/Documents/wayline_mission/{mission_id}/{mission_id}.kmz")
+    all_locs = json.dumps(
+        [{"latitude": lat, "longitude": lon} for lat, lon in waypoints],
+        separators=(",", ":")
+    )
+    now = time.time()
+    con.execute("""
+        INSERT OR REPLACE INTO kmzTable
+          (missionId, filePath, name, author, createTime, updateTime,
+           coverImagePath, waypointImageNames, poiImageNames,
+           waypointCount, mileage, waylineLatitude, waylineLongitude,
+           locationDes, duration, allPointLocations, deleteTime, lastSyncTime)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    """, (
+        mission_id, abs_path, name, "UAV", now, now,
+        f"{mission_id}.jpg", ",".join(f"WP_{i}" for i in range(len(waypoints))), "",
+        len(waypoints), dist,
+        sum(lats) / len(lats), sum(lons) / len(lons),
+        name, int(dist / 8), all_locs, -1, -1.0,
+    ))
+    return abs_path
 
 
 @app.post("/api/push/{job_id}")
@@ -155,12 +216,19 @@ async def push(job_id: str):
     if not job:
         raise HTTPException(404, "Job not found. Re-generate the mission first.")
 
-    kmz_path  = Path(job["kmz_path"])
-    name      = job["name"]
-    waypoints = job["waypoints"]
+    name = job["name"]
 
-    if not kmz_path.exists():
-        raise HTTPException(410, "KMZ file expired. Re-generate the mission.")
+    # Build list of (display_name, kmz_path, waypoints) for each pass to push
+    if job.get("mode") == "photogrammetry":
+        push_items = [
+            (f"{name} ({p['pass']})", Path(p["kmz_path"]), p["waypoints"])
+            for p in job["passes"]
+        ]
+    else:
+        kmz_path = Path(job["kmz_path"])
+        if not kmz_path.exists():
+            raise HTTPException(410, "KMZ file expired. Re-generate the mission.")
+        push_items = [(name, kmz_path, job["waypoints"])]
 
     try:
         from skyrover_ios_bridge import (
@@ -174,70 +242,40 @@ async def push(job_id: str):
             raise HTTPException(503, "No iPhone found — check USB cable and unlock the phone.")
 
         async with _afc_session(lockdown) as afc:
-            mission_id = str(uuid.uuid4()).upper()
-
+            # Read the DB once and work on a local copy
             db_bytes = await _read(afc, MISSION_DB)
             with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as f:
                 f.write(db_bytes)
                 db_tmp = Path(f.name)
 
-            # Extract container UUID from existing missions
             con = sqlite3.connect(str(db_tmp))
             row = con.execute("SELECT filePath FROM kmzTable LIMIT 1").fetchone()
-            con.close()
             if not row:
+                con.close()
                 raise HTTPException(400, "No existing missions on device — save one in-app first.")
-
             parts = row[0].split("/")
             container_uuid = parts[parts.index("Application") + 1]
 
-            # Build absolute path for DB entry
-            abs_path = (f"/var/mobile/Containers/Data/Application/{container_uuid}"
-                        f"/Documents/wayline_mission/{mission_id}/{mission_id}.kmz")
+            mission_ids = []
+            for item_name, kmz_path, waypoints in push_items:
+                if not kmz_path.exists():
+                    continue
+                mission_id = str(uuid.uuid4()).upper()
+                _db_insert_mission(con, container_uuid, mission_id, item_name, waypoints,
+                                   kmz_path.read_bytes(), MISSION_ROOT)
+                dest_dir = f"{MISSION_ROOT}/{mission_id}"
+                await _mkdir(afc, dest_dir)
+                await _write(afc, f"{dest_dir}/{mission_id}.kmz", kmz_path.read_bytes())
+                mission_ids.append(mission_id)
 
-            # Insert mission row
-            lats = [p[0] for p in waypoints]
-            lons = [p[1] for p in waypoints]
-            dist_m = sum(
-                _haversine_m(waypoints[i][0], waypoints[i][1],
-                             waypoints[i+1][0], waypoints[i+1][1])
-                for i in range(len(waypoints)-1)
-            )
-            all_locs = json.dumps(
-                [{"latitude": lat, "longitude": lon} for lat, lon in waypoints],
-                separators=(",", ":")
-            )
-            wp_names = ",".join(f"WP_{i}" for i in range(len(waypoints)))
-            now = time.time()
-
-            con = sqlite3.connect(str(db_tmp))
-            con.execute("""
-                INSERT OR REPLACE INTO kmzTable
-                  (missionId, filePath, name, author, createTime, updateTime,
-                   coverImagePath, waypointImageNames, poiImageNames,
-                   waypointCount, mileage, waylineLatitude, waylineLongitude,
-                   locationDes, duration, allPointLocations, deleteTime, lastSyncTime)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                mission_id, abs_path, name, "UAV", now, now,
-                f"{mission_id}.jpg", wp_names, "",
-                len(waypoints), dist_m,
-                sum(lats)/len(lats), sum(lons)/len(lons),
-                name, int(dist_m / 8), all_locs, -1, -1.0,
-            ))
             con.commit()
             con.close()
-
-            # Push KMZ
-            dest_dir = f"{MISSION_ROOT}/{mission_id}"
-            await _mkdir(afc, dest_dir)
-            await _write(afc, f"{dest_dir}/{mission_id}.kmz", kmz_path.read_bytes())
-
-            # Push updated DB
             await _write(afc, MISSION_DB, db_tmp.read_bytes())
             db_tmp.unlink()
 
-        return {"success": True, "mission_id": mission_id, "name": name}
+        n = len(mission_ids)
+        label = f"{n} passes" if n > 1 else name
+        return {"success": True, "mission_ids": mission_ids, "name": label, "count": n}
 
     except HTTPException:
         raise
