@@ -563,24 +563,31 @@ document.getElementById('btn-generate').addEventListener('click', async () => {
 
     currentJobId = data.job_id;
 
-    // Draw all passes with their colors
+    // All passes share the same ground track — draw it once, list passes in legend.
+    const firstPass = data.passes[0];
+    const lls = firstPass.waypoints.map(p => [p[0], p[1]]);
+    const trackColor = data.passes.length > 1 ? '#4caf50' : firstPass.color;
+    const layer = L.polyline(lls, { color: trackColor, weight: 1.5, opacity: .8 }).addTo(map);
+    previewLayers.push(layer);
+    previewMarkers.push(
+      L.circleMarker(lls[0],            { radius: 6, color: trackColor, fillColor: trackColor, fillOpacity: 1 }).addTo(map),
+      L.circleMarker(lls[lls.length-1], { radius: 6, color: '#e94560',  fillColor: '#e94560',  fillOpacity: 1 }).addTo(map)
+    );
+
     const legend = document.getElementById('pass-legend');
     legend.innerHTML = '<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Passes</div>';
     data.passes.forEach(pass => {
-      const lls = pass.waypoints.map(p => [p[0], p[1]]);
-      const layer = L.polyline(lls, { color: pass.color, weight: 1.5, opacity: .75 }).addTo(map);
-      previewLayers.push(layer);
-      previewMarkers.push(
-        L.circleMarker(lls[0],           { radius: 5, color: pass.color, fillColor: pass.color, fillOpacity: 1 }).addTo(map),
-        L.circleMarker(lls[lls.length-1],{ radius: 5, color: '#e94560',  fillColor: '#e94560',  fillOpacity: 1 }).addTo(map)
-      );
-      const passLabel = pass.pass === 'nadir' ? 'Nadir ↓'
+      const passLabel = pass.pass === 'nadir'
+        ? 'Nadir ↓ (straight down)'
         : pass.pass.charAt(0).toUpperCase() + pass.pass.slice(1) + ` oblique (${Math.abs(pass.gimbal)}°)`;
       legend.innerHTML += `<div style="font-size:12px;display:flex;align-items:center;gap:6px;">
         <span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:${pass.color}"></span>
         ${passLabel}</div>`;
     });
-    if (data.passes.length > 1) legend.style.display = 'flex';
+    if (data.passes.length > 1) {
+      legend.innerHTML += `<div style="font-size:11px;color:var(--muted);margin-top:4px;">Same grid, flown ${data.passes.length}×</div>`;
+      legend.style.display = 'flex';
+    }
 
     const modeLabel  = data.mode === 'photogrammetry' ? `${data.passes.length}-pass photo` : 'survey';
     document.getElementById('stats').innerHTML =
