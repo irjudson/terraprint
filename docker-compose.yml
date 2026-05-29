@@ -22,7 +22,7 @@ services:
       dockerfile: docker/web/Dockerfile
     image: terraprint/web:latest
     ports:
-      - "${PORT:-8000}:8000"
+      - "${PORT:-8001}:8000"
     environment:
       MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
     volumes:

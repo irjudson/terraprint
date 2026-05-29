@@ -18,22 +18,22 @@ cd terraprint
 cp .env.example .env
 # Optional: add your Mapbox token to .env for better satellite imagery
 uv sync
-uv run uvicorn web.app:app --reload --host 0.0.0.0 --port 8000
-# open http://localhost:8000
+uv run uvicorn web.app:app --reload --host 0.0.0.0 --port 8001
+# open http://localhost:8001
 ```
 
 Or with Docker:
 
 ```bash
 docker compose up web
-# open http://localhost:8000
+# open http://localhost:8001
 ```
 
 Or install as a CLI tool:
 
 ```bash
 uv tool install .
-terraprint          # starts the server on port 8000
+terraprint          # starts the server on port 8001
 ```
 
 ### Features

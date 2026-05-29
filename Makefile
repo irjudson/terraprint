@@ -53,7 +53,7 @@ help:
 	@echo "  make survey BBOX=\"lat1,lon1,lat2,lon2\" ALTITUDE=80 OVERLAP=80"
 	@echo ""
 	@echo "Mission planner PWA:"
-	@echo "  make web                             Start map planner at http://localhost:8000"
+	@echo "  make web                             Start map planner at http://localhost:8001"
 	@echo ""
 	@echo "iPhone mission push (requires USB + pymobiledevice3 via: uv sync):"
 	@echo "  make probe-phone                     Explore app container, find mission storage"
