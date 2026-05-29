@@ -142,7 +142,8 @@ async def generate(req: SurveyRequest):
             waypoints, req.altitude, req.speed, tmp_dir, "mission",
             oblique_pitch=req.gimbal_pitch if req.gimbal_pitch != -90.0 else -45.0,
         )
-        _jobs[job_id] = {"mode": "photogrammetry", "name": req.name, "passes": passes}
+        _jobs[job_id] = {"mode": "photogrammetry", "name": req.name,
+                         "passes": [dict(p, waypoints=waypoints) for p in passes]}
         n_passes = len(passes)
         return {
             "job_id":         job_id,
