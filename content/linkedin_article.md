@@ -21,6 +21,8 @@ The piece I'm most proud of is photogrammetry mode. A standard nadir grid (camer
 
 From there, OpenDroneMap chews through the images and produces a DSM, which feeds back into the same STL pipeline. Drone takes off, drone lands, model comes out of the printer. The loop is closed.
 
+One thing tutorials never tell you: how long it actually takes. For a 50-acre test area at 80m altitude, the five passes take about 90 minutes total — one battery per pass, three minutes to swap, done before lunch. For the full 640-acre ranch, the math is less friendly: 35 battery swaps, roughly 16 hours of flying spread across several days. Start small, prove the pipeline, then scale up.
+
 A few things I learned worth sharing. Self-hosted matters more than I expected — owning the whole pipeline means I can fly a property without anyone's terms of service in the way. USB control of the iPhone is a wildly underused trick; it's faster and more reliable than anything wireless. And there is a real appetite among ranchers and small operators for tools that treat their land as the unit of analysis, not someone else's grid square.
 
 Terraprint is open source. If you're building in drones, AgTech, mapping, or you just want a tiny replica of the place you call home, I'd love feedback — and especially war stories from anyone who has wrestled with DJI's mission formats, ODM tuning, or printing weird organic geometry.

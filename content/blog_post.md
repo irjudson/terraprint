@@ -99,12 +99,20 @@ Two actions per waypoint: set the gimbal, then shoot. The oblique passes also se
 
 When you trigger photogrammetry mode in the planner, it generates all five KMZs and pushes them to the phone in a single USB session. You walk out to the drone, fly them in order, and come back with a coherent set of images.
 
+## How Long Does It Actually Take
+
+This is the question nobody answers in tutorials, so I will.
+
+At 80m altitude with 80% overlap, the planner reports 4,316 waypoints per pass over the core ranch area (roughly 50 acres around the main buildings). Each pass takes about 15 minutes of flight time — well within one battery. Five passes, five batteries, about 90 minutes from wheels-up to SD card in hand. Three minutes to swap batteries between passes, maybe ten minutes to reposition between the nadir and each cardinal oblique. Call it two hours with setup and breakdown.
+
+For the full 640-acre property the math is less friendly: 173 minutes of flight per pass, seven batteries per pass, 35 battery swaps across all five passes, and about 16 hours of total clock time spread across several days. That is a real project, not a weekend afternoon. Start with a smaller test area.
+
 ## The Demo Workflow
 
 End to end, on a flight day, this is the loop:
 
 ```bash
-# Plan and push (from the web UI at http://localhost:8000)
+# Plan and push (from the web UI at http://localhost:8001)
 docker compose up web
 
 # Fly the five missions from the Skyrover X1 app, swap SD card
