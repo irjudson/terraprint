@@ -1,9 +1,8 @@
 ---
 title: "Terraprint: From Drone Flight to 3D-Printed Ranch in One Pipeline"
-date: 2026-06-03
-author: Ivan Judson
-tags: [drones, photogrammetry, 3d-printing, gis, dji, opendronemap, terrain]
-repo: https://github.com/irjudson/terraprint
+date: 2026-06-03 09:00:00 -0600
+categories: [Projects, Hardware]
+tags: [drones, photogrammetry, 3d-printing, gis, dji, opendronemap, terrain, agtech, buffalo-jump-forge]
 ---
 
 # Terraprint: From Drone Flight to 3D-Printed Ranch in One Pipeline
