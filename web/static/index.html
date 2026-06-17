@@ -207,6 +207,55 @@
     .status-flown      { background: #1a4a1a; color: #7af57a; }
     .status-processing { background: #4a3a1a; color: #f5c57a; }
     .status-processed  { background: #2a4a2a; color: #4caf50; }
+
+    /* ── flights sub-panel ── */
+    .mission-flights {
+      display: none; border-top: 1px solid rgba(255,255,255,.06);
+      background: rgba(0,0,0,.15); padding: 8px 10px;
+    }
+    .mission-flights.open { display: block; }
+    .flight-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+      font-size: 11px;
+    }
+    .flight-row:last-child { border-bottom: none; }
+    .flight-info { flex: 1; min-width: 0; }
+    .flight-dir  { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .flight-meta { color: var(--muted); }
+    .pipeline-bar {
+      display: flex; gap: 3px; align-items: center; margin-top: 3px;
+    }
+    .pipeline-step {
+      padding: 1px 5px; border-radius: 3px; font-size: 9px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .04em;
+    }
+    .step-pending  { background: #333; color: #666; }
+    .step-running  { background: #4a3a1a; color: #f5c57a; }
+    .step-done     { background: #1a3a1a; color: #4caf50; }
+    .step-failed   { background: #3a1a1a; color: #f55; }
+    .flight-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .flight-btn {
+      padding: 2px 7px; border: none; border-radius: 3px;
+      font-size: 10px; font-weight: 600; cursor: pointer;
+      background: var(--card); color: var(--muted);
+    }
+    .flight-btn:hover { background: var(--accent); color: #fff; }
+    .flight-btn.danger:hover { background: #c0392b; }
+    .log-flight-row {
+      padding: 6px 0 2px; display: flex; gap: 6px; align-items: center;
+    }
+    .log-flight-row select {
+      flex: 1; background: var(--card); border: none; border-radius: 4px;
+      color: var(--text); padding: 4px 6px; font-size: 11px; outline: none;
+    }
+    .log-flight-row select:disabled { opacity: .4; }
+    .btn-log-confirm {
+      padding: 4px 10px; border: none; border-radius: 4px;
+      background: var(--accent); color: #fff; font-size: 11px;
+      font-weight: 600; cursor: pointer;
+    }
+    .btn-log-confirm:disabled { opacity: .4; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -719,12 +768,122 @@ const STATUS_COLORS = {
   processed:  '#27ae60',
 };
 
-let missionLayers = [];
-let selectedMissionId = null;
+let _missionLayers = [];
+let _selectedMissionId = null;
 
-function clearMissionLayers() {
-  missionLayers.forEach(l => map.removeLayer(l));
-  missionLayers = [];
+function _clearMissionLayers() {
+  _missionLayers.forEach(l => map.removeLayer(l));
+  _missionLayers = [];
+}
+
+function _pipelineStep(status, label) {
+  const icon = status === 'done' ? '✓' : status === 'running' ? '…' : status === 'failed' ? '✗' : '·';
+  return `<span class="pipeline-step step-${status}">${label} ${icon}</span>`;
+}
+
+function _renderFlight(f, missionId, hasPhonePass) {
+  const div = document.createElement('div');
+  div.className = 'flight-row';
+  div.innerHTML = `
+    <div class="flight-info">
+      <div class="flight-dir">${f.raw_dir}</div>
+      <div class="flight-meta">${f.photo_count} photos</div>
+      <div class="pipeline-bar">
+        ${_pipelineStep('done', 'RAW')}
+        ${_pipelineStep(f.odm_status, 'ODM')}
+        ${_pipelineStep(f.terrain_status, 'STL')}
+      </div>
+    </div>
+    <div class="flight-actions">
+      <button class="flight-btn danger btn-clear-flight" title="Mark done">Clear</button>
+    </div>
+  `;
+  div.querySelector('.btn-clear-flight').addEventListener('click', e => {
+    e.stopPropagation();
+    _clearFlight(f.id, missionId, hasPhonePass, div.closest('.mission-flights'));
+  });
+  return div;
+}
+
+async function _loadFlights(missionId, container, hasPhonePass) {
+  container.innerHTML = '<div style="padding:4px 0;font-size:11px;color:var(--muted);">Loading…</div>';
+  try {
+    const res = await fetch(`/api/missions/${missionId}/flights`);
+    const flights = await res.json();
+    container.innerHTML = '';
+    flights.forEach(f => container.appendChild(_renderFlight(f, missionId, hasPhonePass)));
+
+    // Log flight row
+    const logRow = document.createElement('div');
+    logRow.className = 'log-flight-row';
+    const selId = `raw-sel-${missionId}`;
+    logRow.innerHTML = `
+      <select id="${selId}"><option value="">Loading…</option></select>
+      <button class="btn-log-confirm" disabled>+ Log</button>
+    `;
+    container.appendChild(logRow);
+
+    const sel = logRow.querySelector('select');
+    const btn = logRow.querySelector('button');
+
+    fetch('/api/raw-dirs').then(r => r.json()).then(dirs => {
+      sel.innerHTML = '<option value="">— pick raw dir —</option>';
+      dirs.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.dir;
+        opt.dataset.count = d.photo_count;
+        opt.textContent = `${d.dir} (${d.photo_count} photos)`;
+        sel.appendChild(opt);
+      });
+      if (!dirs.length) sel.innerHTML = '<option value="">No raw dirs found</option>';
+    }).catch(() => { sel.innerHTML = '<option value="">Failed to load</option>'; });
+
+    sel.addEventListener('change', () => { btn.disabled = !sel.value; });
+    btn.addEventListener('click', async () => {
+      const dir = sel.value;
+      if (!dir) return;
+      const count = parseInt(sel.selectedOptions[0]?.dataset.count || '0');
+      btn.disabled = true; btn.textContent = '…';
+      try {
+        const r = await fetch(`/api/missions/${missionId}/flights`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ raw_dir: dir, photo_count: count }),
+        });
+        if (!r.ok) { toast('Failed to log flight', 'err'); return; }
+        await _loadFlights(missionId, container, hasPhonePass);
+        loadMissions();
+        toast('Flight logged', 'ok');
+      } catch { toast('Failed to log flight', 'err'); }
+      finally { btn.disabled = false; btn.textContent = '+ Log'; }
+    });
+  } catch {
+    container.innerHTML = '<div style="padding:4px 0;font-size:11px;color:var(--muted);">Failed to load.</div>';
+  }
+}
+
+async function _clearFlight(flightId, missionId, hasPhonePass, container) {
+  let deleteFromPhone = false;
+  if (hasPhonePass) {
+    deleteFromPhone = confirm('Also remove mission from Skyrover on phone?');
+  } else {
+    if (!confirm('Mark this flight as done?')) return;
+  }
+  try {
+    const url = `/api/flights/${flightId}/clear${deleteFromPhone ? '?delete_from_phone=true' : ''}`;
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { toast(data.detail || 'Clear failed', 'err'); return; }
+    const msg = deleteFromPhone
+      ? `Done · ${data.phone_deleted} removed from phone`
+      : 'Marked done';
+    toast(msg, 'ok');
+    if (container) {
+      const panel = container.closest('.mission-flights');
+      if (panel) await _loadFlights(missionId, panel, hasPhonePass);
+    }
+    loadMissions();
+  } catch { toast('Clear failed', 'err'); }
 }
 
 async function loadMissions() {
@@ -738,58 +897,59 @@ async function loadMissions() {
     }
     list.innerHTML = '';
     missions.forEach(m => {
-      const div = document.createElement('div');
-      div.className = 'mission-item' + (m.id === selectedMissionId ? ' selected' : '');
-      div.dataset.id = m.id;
-      const d = new Date(m.created_at * 1000);
-      const dateStr = d.toLocaleDateString();
-      div.innerHTML = `
+      const wrapper = document.createElement('div');
+
+      const item = document.createElement('div');
+      item.className = 'mission-item';
+      item.dataset.id = m.id;
+      const d = new Date((m.created_at || 0) * 1000);
+      item.innerHTML = `
         <div class="mission-item-name">
           ${m.name}
-          <span class="mission-status status-${m.status}">${m.status.replace('_', ' ')}</span>
+          <span class="mission-status status-${m.status}">${m.status.replace(/_/g, ' ')}</span>
         </div>
-        <div class="mission-item-meta">${m.mode} · ${m.altitude}m · ${dateStr}</div>
+        <div class="mission-item-meta">${m.mode} · ${m.altitude || '?'}m · ${d.toLocaleDateString()}</div>
       `;
-      div.addEventListener('click', () => visualizeMission(m.id, div));
-      list.appendChild(div);
+
+      const flightsPanel = document.createElement('div');
+      flightsPanel.className = 'mission-flights';
+
+      const hasPhonePass = m.passes_on_phone > 0;
+
+      item.addEventListener('click', () => {
+        const isOpen = flightsPanel.classList.toggle('open');
+        if (isOpen) _loadFlights(m.id, flightsPanel, hasPhonePass);
+        _visualizeMission(m.id, item);
+      });
+
+      wrapper.appendChild(item);
+      wrapper.appendChild(flightsPanel);
+      list.appendChild(wrapper);
     });
-  } catch (e) {
+  } catch {
     list.innerHTML = '<div style="padding:14px;font-size:12px;color:var(--muted);">Failed to load.</div>';
   }
 }
 
-async function visualizeMission(missionId, el) {
+function _visualizeMission(missionId, el) {
   document.querySelectorAll('.mission-item.selected').forEach(d => d.classList.remove('selected'));
-  clearMissionLayers();
-
-  if (selectedMissionId === missionId) {
-    selectedMissionId = null;
-    return;
-  }
-  selectedMissionId = missionId;
+  _clearMissionLayers();
+  if (_selectedMissionId === missionId) { _selectedMissionId = null; return; }
+  _selectedMissionId = missionId;
   el.classList.add('selected');
-
-  try {
-    const res = await fetch(`/api/missions/${missionId}/waypoints`);
-    const passes = await res.json();
-
-    passes.forEach(p => {
-      if (!p.waypoints.length) return;
-      const color = p.on_phone ? STATUS_COLORS.on_phone : STATUS_COLORS.planned;
-      const lls = p.waypoints.map(wp => [wp[0], wp[1]]);
-      const line = L.polyline(lls, { color, weight: 1.5, opacity: .8 }).addTo(map);
-      missionLayers.push(line);
-      missionLayers.push(
-        L.circleMarker(lls[0], { radius: 5, color, fillColor: color, fillOpacity: 1 }).addTo(map)
-      );
-    });
-
-    if (missionLayers.length) {
-      map.fitBounds(L.featureGroup(missionLayers).getBounds(), { padding: [40, 40] });
-    }
-  } catch (e) {
-    toast('Failed to load waypoints', 'err');
-  }
+  fetch(`/api/missions/${missionId}/waypoints`)
+    .then(r => r.json())
+    .then(passes => {
+      passes.forEach(p => {
+        if (!p.waypoints.length) return;
+        const color = p.on_phone ? STATUS_COLORS.on_phone : STATUS_COLORS.planned;
+        const lls = p.waypoints.map(wp => [wp[0], wp[1]]);
+        _missionLayers.push(L.polyline(lls, { color, weight: 1.5, opacity: .8 }).addTo(map));
+        _missionLayers.push(L.circleMarker(lls[0], { radius: 5, color, fillColor: color, fillOpacity: 1 }).addTo(map));
+      });
+      if (_missionLayers.length) map.fitBounds(L.featureGroup(_missionLayers).getBounds(), { padding: [40, 40] });
+    })
+    .catch(() => toast('Failed to load waypoints', 'err'));
 }
 
 document.getElementById('btn-missions').addEventListener('click', () => {
@@ -809,7 +969,7 @@ document.getElementById('btn-sync-phone').addEventListener('click', async () => 
     if (!res.ok) { toast(data.detail || 'Sync failed', 'err'); return; }
     toast(`Sync done · ${data.matched} matched · ${data.newly_deleted} removed · ${data.imported ?? 0} imported`, 'ok');
     loadMissions();
-  } catch (e) {
+  } catch {
     toast('Sync failed — phone plugged in?', 'err');
   } finally {
     btn.disabled = false;
