@@ -286,13 +286,15 @@ async def sync_phone(mission_id: str):  # mission_id unused — global sync
             f.write(db_bytes)
             tmp = f.name
 
-        con = sqlite3.connect(tmp)
-        rows = [
-            {"missionId": r[0], "name": r[1], "deleteTime": r[2]}
-            for r in con.execute("SELECT missionId, name, deleteTime FROM kmzTable").fetchall()
-        ]
-        con.close()
-        Path(tmp).unlink(missing_ok=True)
+        try:
+            con = sqlite3.connect(tmp)
+            rows = [
+                {"missionId": r[0], "name": r[1], "deleteTime": r[2]}
+                for r in con.execute("SELECT missionId, name, deleteTime FROM kmzTable").fetchall()
+            ]
+            con.close()
+        finally:
+            Path(tmp).unlink(missing_ok=True)
 
         counts = _db_sync_from_phone(rows)
         return {"ok": True, **counts, "phone_total": len(rows)}
