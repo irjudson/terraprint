@@ -41,6 +41,7 @@ from web.db import (
 )
 
 DATA_ROOT = Path(__file__).parent.parent / "data"
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".dng"}
 
 app = FastAPI(title="Terraprint Mission Planner")
 
@@ -342,7 +343,6 @@ async def list_raw_dirs():
     raw_root = DATA_ROOT / "00_raw"
     if not raw_root.exists():
         return []
-    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".dng"}
     result = []
     for d in sorted(raw_root.iterdir()):
         if d.is_dir():
@@ -353,32 +353,44 @@ async def list_raw_dirs():
 
 @app.get("/api/missions/{mission_id}/flights")
 async def get_flights(mission_id: str):
+    with _open_db() as con:
+        exists = con.execute("SELECT 1 FROM missions WHERE id=?", (mission_id,)).fetchone()
+    if not exists:
+        raise HTTPException(404, "Mission not found")
     return _db_list_flights(mission_id)
 
 
 @app.post("/api/missions/{mission_id}/flights")
 async def log_flight(mission_id: str, req: LogFlightRequest):
+    with _open_db() as con:
+        exists = con.execute("SELECT 1 FROM missions WHERE id=?", (mission_id,)).fetchone()
+    if not exists:
+        raise HTTPException(404, "Mission not found")
     flight_id = _db_log_flight(mission_id, req.raw_dir, req.photo_count, req.flight_date)
     return {"flight_id": flight_id}
 
 
 @app.patch("/api/flights/{flight_id}")
 async def update_flight(flight_id: str, req: FlightStatusRequest):
+    with _open_db() as con:
+        exists = con.execute("SELECT 1 FROM flights WHERE id=?", (flight_id,)).fetchone()
+    if not exists:
+        raise HTTPException(404, "Flight not found")
     _db_update_flight_status(flight_id, req.odm_status, req.terrain_status)
     return {"ok": True}
 
 
 @app.post("/api/flights/{flight_id}/clear")
 async def clear_flight(flight_id: str, delete_from_phone: bool = False):
-    _db_mark_flight_done(flight_id)
-
     if not delete_from_phone:
+        _db_mark_flight_done(flight_id)
         return {"ok": True, "phone_deleted": 0}
 
-    # Find the mission and its active phone passes
+    # Find active phone passes BEFORE marking done
     with _open_db() as con:
         row = con.execute("SELECT mission_id FROM flights WHERE id=?", (flight_id,)).fetchone()
         if not row:
+            _db_mark_flight_done(flight_id)
             return {"ok": True, "phone_deleted": 0}
         mid = row["mission_id"]
         passes = con.execute(
@@ -389,6 +401,7 @@ async def clear_flight(flight_id: str, delete_from_phone: bool = False):
         ).fetchall()
 
     if not passes:
+        _db_mark_flight_done(flight_id)
         return {"ok": True, "phone_deleted": 0}
 
     try:
@@ -411,24 +424,28 @@ async def clear_flight(flight_id: str, delete_from_phone: bool = False):
             try:
                 import sqlite3 as _sq
                 pcon = _sq.connect(tmp)
-                for p in passes:
-                    pmid = p["phone_mission_id"]
-                    pcon.execute(
-                        "UPDATE kmzTable SET deleteTime=? WHERE missionId=?", (now, pmid)
-                    )
-                    kmz_path = f"{MISSION_ROOT}/{pmid}/{pmid}.kmz"
-                    try:
-                        await afc.rm(kmz_path, force=True)
-                    except Exception:
-                        pass
-                    phone_deleted += 1
-                pcon.commit()
-                pcon.close()
+                try:
+                    for p in passes:
+                        pmid = p["phone_mission_id"]
+                        pcon.execute(
+                            "UPDATE kmzTable SET deleteTime=? WHERE missionId=?", (now, pmid)
+                        )
+                        kmz_path = f"{MISSION_ROOT}/{pmid}/{pmid}.kmz"
+                        try:
+                            await afc.rm(kmz_path, force=True)
+                        except Exception:
+                            pass
+                        phone_deleted += 1
+                    pcon.commit()
+                finally:
+                    pcon.close()
                 with open(tmp, "rb") as f:
                     await _write(afc, MISSION_DB, f.read())
             finally:
                 Path(tmp).unlink(missing_ok=True)
 
+        # Phone operations succeeded — NOW mark done locally
+        _db_mark_flight_done(flight_id)
         now_local = time.time()
         with _open_db() as con:
             for p in passes:
