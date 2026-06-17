@@ -1,5 +1,3 @@
-"""Tests for web/db.py — mission lifecycle database."""
-
 import json
 import sys
 import time
@@ -31,7 +29,6 @@ def _one_pass(name="survey"):
 # ── init_db ───────────────────────────────────────────────────────────────────
 
 def test_init_db_creates_tables(tmp_path, monkeypatch):
-    """init_db is idempotent and creates all three tables."""
     db.init_db()  # second call should not raise
     with db._db() as con:
         tables = {r[0] for r in con.execute(
@@ -79,7 +76,6 @@ def test_record_push_updates_status():
 def test_record_push_clears_deleted_flag():
     mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
     db.record_push(mid, "survey", "PHONE-UUID-1234")
-    # Simulate deletion then re-push
     with db._db() as con:
         con.execute(
             "UPDATE mission_passes SET deleted_from_phone_at=? WHERE mission_id=?",
