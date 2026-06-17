@@ -256,6 +256,53 @@ async def save_mission_endpoint(req: SaveMissionRequest):
     return {"mission_id": mission_id}
 
 
+@app.get("/api/missions")
+async def list_missions_endpoint():
+    return _db_list_missions()
+
+
+@app.get("/api/missions/{mission_id}/waypoints")
+async def mission_waypoints(mission_id: str):
+    passes = _db_get_mission_waypoints(mission_id)
+    if not passes:
+        raise HTTPException(404, "Mission not found.")
+    return passes
+
+
+@app.post("/api/missions/{mission_id}/sync-phone")
+async def sync_phone(mission_id: str):  # mission_id unused — global sync
+    try:
+        from skyrover_ios_bridge import MISSION_DB, _afc_session, _get_lockdown, _read
+
+        try:
+            lockdown = await asyncio.wait_for(_get_lockdown(), timeout=8.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(503, "No iPhone found.")
+
+        async with _afc_session(lockdown) as afc:
+            db_bytes = await _read(afc, MISSION_DB)
+
+        with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as f:
+            f.write(db_bytes)
+            tmp = f.name
+
+        con = sqlite3.connect(tmp)
+        rows = [
+            {"missionId": r[0], "name": r[1], "deleteTime": r[2]}
+            for r in con.execute("SELECT missionId, name, deleteTime FROM kmzTable").fetchall()
+        ]
+        con.close()
+        Path(tmp).unlink(missing_ok=True)
+
+        counts = _db_sync_from_phone(rows)
+        return {"ok": True, **counts, "phone_total": len(rows)}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
 def _db_insert_mission(con: sqlite3.Connection, container_uuid: str,
                        mission_id: str, name: str, waypoints: list, kmz_bytes: bytes,
                        mission_root: str) -> str:
