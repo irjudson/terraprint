@@ -121,7 +121,7 @@ def test_get_mission_waypoints_deleted_not_on_phone():
 def test_sync_marks_deleted_passes():
     mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
     db.record_push(mid, "survey", "PHONE-UUID")
-    result = db.sync_from_phone([{"missionId": "PHONE-UUID", "deleteTime": 1234567.0}])
+    result = db.sync_from_phone([{"missionId": "PHONE-UUID", "deleteTime": 1234567.0, "waypoints": []}])
     assert result["newly_deleted"] == 1
     rows = db.list_missions()
     assert rows[0]["passes_on_phone"] == 0
@@ -130,13 +130,41 @@ def test_sync_marks_deleted_passes():
 def test_sync_matched_count():
     mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
     db.record_push(mid, "survey", "PHONE-UUID")
-    result = db.sync_from_phone([{"missionId": "PHONE-UUID", "deleteTime": -1}])
+    result = db.sync_from_phone([{"missionId": "PHONE-UUID", "deleteTime": -1, "waypoints": WAYPOINTS}])
     assert result["matched"] == 1
     assert result["newly_deleted"] == 0
+    assert result["imported"] == 0
 
 
-def test_sync_unknown_phone_missions_ignored():
-    db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
-    result = db.sync_from_phone([{"missionId": "UNKNOWN-UUID", "deleteTime": -1}])
+def test_sync_imports_unknown_phone_missions():
+    result = db.sync_from_phone([
+        {"missionId": "NEW-PHONE-UUID", "name": "Phone Mission", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    assert result["imported"] == 1
     rows = db.list_missions()
-    assert rows[0]["status"] == "planned"
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Phone Mission"
+    assert rows[0]["status"] == "on_phone"
+    assert rows[0]["passes_on_phone"] == 1
+
+
+def test_sync_imports_waypoints_correctly():
+    db.sync_from_phone([
+        {"missionId": "WP-UUID", "name": "WP Mission", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    rows = db.list_missions()
+    passes = db.get_mission_waypoints(rows[0]["id"])
+    assert passes[0]["waypoints"] == WAYPOINTS
+    assert passes[0]["on_phone"] is True
+
+
+def test_sync_does_not_reimport_known_missions():
+    db.sync_from_phone([
+        {"missionId": "KNOWN-UUID", "name": "Mission", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    result = db.sync_from_phone([
+        {"missionId": "KNOWN-UUID", "name": "Mission", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    assert result["imported"] == 0
+    assert result["matched"] == 1
+    assert len(db.list_missions()) == 1

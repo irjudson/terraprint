@@ -288,10 +288,22 @@ async def sync_phone(mission_id: str):  # mission_id unused — global sync
 
         try:
             con = sqlite3.connect(tmp)
-            rows = [
-                {"missionId": r[0], "name": r[1], "deleteTime": r[2]}
-                for r in con.execute("SELECT missionId, name, deleteTime FROM kmzTable").fetchall()
-            ]
+            rows = []
+            for r in con.execute(
+                "SELECT missionId, name, deleteTime, allPointLocations FROM kmzTable"
+            ).fetchall():
+                raw_wps = r[3]
+                try:
+                    pts = json.loads(raw_wps) if raw_wps else []
+                    waypoints = [[p["latitude"], p["longitude"]] for p in pts]
+                except Exception:
+                    waypoints = []
+                rows.append({
+                    "missionId":  r[0],
+                    "name":       r[1],
+                    "deleteTime": r[2],
+                    "waypoints":  waypoints,
+                })
             con.close()
         finally:
             Path(tmp).unlink(missing_ok=True)
@@ -301,6 +313,8 @@ async def sync_phone(mission_id: str):  # mission_id unused — global sync
 
     except HTTPException:
         raise
+    except SystemExit:
+        raise HTTPException(503, "iPhone not connected — check USB cable and unlock the phone.")
     except Exception as exc:
         raise HTTPException(500, str(exc))
 

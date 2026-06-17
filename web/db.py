@@ -171,21 +171,25 @@ def get_mission_waypoints(mission_id: str) -> list:
 
 def sync_from_phone(phone_rows: list) -> dict:
     """
-    Reconcile our DB against what's actually on the phone.
-    phone_rows: [{"missionId": str, "name": str, "deleteTime": float}, ...]
-    Returns counts: {matched, newly_deleted}
+    Reconcile our DB against what's on the phone.
+    phone_rows: [{"missionId": str, "name": str, "deleteTime": float, "waypoints": [[lat,lon],...]}]
+    Returns counts: {matched, newly_deleted, imported}
     """
-    phone_ids   = {r["missionId"] for r in phone_rows if r.get("deleteTime", -1) == -1}
+    active_rows = [r for r in phone_rows if r.get("deleteTime", -1) == -1]
+    phone_ids   = {r["missionId"] for r in active_rows}
     deleted_ids = {r["missionId"] for r in phone_rows if r.get("deleteTime", -1) != -1}
+    by_id       = {r["missionId"]: r for r in phone_rows}
 
     now = time.time()
     matched = 0
     newly_deleted = 0
+    imported = 0
 
     with _db() as con:
         our_passes = con.execute(
             "SELECT id, phone_mission_id, mission_id FROM mission_passes WHERE phone_mission_id IS NOT NULL"
         ).fetchall()
+        known_phone_ids = {p["phone_mission_id"] for p in our_passes}
 
         affected_missions = set()
         for p in our_passes:
@@ -210,4 +214,23 @@ def sync_from_phone(phone_rows: list) -> dict:
             status  = _derive_status(passes, flights)
             con.execute("UPDATE missions SET status=?, updated_at=? WHERE id=?", (status, now, mid))
 
-    return {"matched": matched, "newly_deleted": newly_deleted}
+        # Import phone missions that aren't in our DB yet
+        for phone_id in phone_ids - known_phone_ids:
+            row = by_id[phone_id]
+            mission_id = str(uuid.uuid4())
+            con.execute(
+                """INSERT INTO missions
+                   (id, name, polygon, mode, status, created_at, updated_at)
+                   VALUES (?,?,'[]','survey','on_phone',?,?)""",
+                (mission_id, row["name"], now, now),
+            )
+            con.execute(
+                """INSERT INTO mission_passes
+                   (id, mission_id, pass_name, phone_mission_id, waypoints, pushed_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (str(uuid.uuid4()), mission_id, "survey", phone_id,
+                 json.dumps(row.get("waypoints", [])), now),
+            )
+            imported += 1
+
+    return {"matched": matched, "newly_deleted": newly_deleted, "imported": imported}

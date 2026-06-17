@@ -807,7 +807,7 @@ document.getElementById('btn-sync-phone').addEventListener('click', async () => 
     const res = await fetch('/api/missions/sync/sync-phone', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { toast(data.detail || 'Sync failed', 'err'); return; }
-    toast(`Sync done · ${data.matched} matched · ${data.newly_deleted} removed`, 'ok');
+    toast(`Sync done · ${data.matched} matched · ${data.newly_deleted} removed · ${data.imported ?? 0} imported`, 'ok');
     loadMissions();
   } catch (e) {
     toast('Sync failed — phone plugged in?', 'err');
