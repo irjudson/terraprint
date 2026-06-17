@@ -165,6 +165,48 @@
       box-shadow: var(--shadow); outline: none; width: 200px;
     }
     #mission-name::placeholder { color: var(--muted); }
+
+    /* ── missions sidebar ── */
+    #missions-panel {
+      position: fixed; left: 68px; top: 12px; bottom: 12px;
+      z-index: 1000; width: 280px;
+      background: var(--surface); border-radius: var(--radius);
+      box-shadow: var(--shadow); display: none; flex-direction: column;
+      overflow: hidden;
+    }
+    #missions-panel.open { display: flex; }
+    #missions-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.06);
+      flex-shrink: 0;
+    }
+    #missions-header h3 { font-size: 13px; font-weight: 600; margin: 0; }
+    #btn-sync-phone {
+      padding: 4px 10px; border: none; border-radius: 4px;
+      background: var(--card); color: var(--text); font-size: 11px;
+      cursor: pointer; white-space: nowrap;
+    }
+    #btn-sync-phone:hover { background: var(--accent); }
+    #missions-list { flex: 1; overflow-y: auto; padding: 8px 0; }
+    .mission-item {
+      padding: 8px 14px; cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,.03);
+      transition: background .1s;
+    }
+    .mission-item:hover { background: rgba(255,255,255,.04); }
+    .mission-item.selected { background: var(--card); }
+    .mission-item-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+    .mission-item-meta { font-size: 11px; color: var(--muted); }
+    .mission-status {
+      display: inline-block; padding: 1px 6px; border-radius: 3px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; margin-left: 6px;
+    }
+    .status-planned    { background: #333; color: #aaa; }
+    .status-on_phone   { background: #1a4a80; color: #7ab4f5; }
+    .status-flown      { background: #1a4a1a; color: #7af57a; }
+    .status-processing { background: #4a3a1a; color: #f5c57a; }
+    .status-processed  { background: #2a4a2a; color: #4caf50; }
   </style>
 </head>
 <body>
@@ -190,6 +232,7 @@
   <button class="tool-btn" id="btn-clear" title="Clear polygon">✕</button>
   <button class="tool-btn" id="btn-units" title="Toggle units">m</button>
   <button class="tool-btn" id="btn-settings" title="Settings">⚙</button>
+  <button class="tool-btn" id="btn-missions" title="Missions">📋</button>
 </div>
 
 <!-- Pass legend (shown after photogrammetry preview) -->
@@ -249,6 +292,17 @@
       <input id="mapbox-token" type="password" placeholder="pk.eyJ1…" autocomplete="off">
       <button id="btn-save-token">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Missions sidebar -->
+<div id="missions-panel">
+  <div id="missions-header">
+    <h3>Missions</h3>
+    <button id="btn-sync-phone" title="Sync with phone">📱 Sync</button>
+  </div>
+  <div id="missions-list">
+    <div style="padding:14px;font-size:12px;color:var(--muted);">Loading…</div>
   </div>
 </div>
 
@@ -434,6 +488,7 @@ document.getElementById('btn-clear').addEventListener('click', () => {
   clearPolygon();
   clearPreview();
   currentJobId = null;
+  window._savedMissionId = null;
   document.getElementById('btn-generate').disabled = true;
   document.getElementById('btn-push').disabled = true;
   document.getElementById('name-wrap').style.display = 'none';
@@ -616,11 +671,26 @@ document.getElementById('btn-push').addEventListener('click', async () => {
   toast('Pushing to phone…', 'info');
 
   try {
+    // Save to mission DB before pushing (idempotent — skips if already saved)
+    if (currentJobId && !window._savedMissionId) {
+      const nameEl = document.getElementById('mission-name');
+      const saveRes = await fetch('/api/missions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: currentJobId, name: nameEl.value.trim() || 'Mission' }),
+      });
+      if (saveRes.ok) {
+        const saved = await saveRes.json();
+        window._savedMissionId = saved.mission_id;
+      }
+    }
     const res = await fetch(`/api/push/${currentJobId}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) { toast(data.detail || 'Push failed', 'err'); return; }
     const countLabel = data.count > 1 ? `${data.count} passes` : `"${data.name}"`;
     toast(`✓ ${countLabel} pushed to Skyrover`, 'ok');
+    if (document.getElementById('missions-panel').classList.contains('open')) loadMissions();
+    window._savedMissionId = null;
   } catch (e) {
     toast('Push failed — is the phone plugged in?', 'err');
   } finally {
@@ -638,6 +708,114 @@ function toast(msg, type = 'info') {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
+// ── Missions panel ──────────────────────────────────────────────────────────
+
+const STATUS_COLORS = {
+  planned:    '#888888',
+  on_phone:   '#4a90d9',
+  flown:      '#4caf50',
+  processing: '#f5a623',
+  processed:  '#27ae60',
+};
+
+let missionLayers = [];
+let selectedMissionId = null;
+
+function clearMissionLayers() {
+  missionLayers.forEach(l => map.removeLayer(l));
+  missionLayers = [];
+}
+
+async function loadMissions() {
+  const list = document.getElementById('missions-list');
+  try {
+    const res = await fetch('/api/missions');
+    const missions = await res.json();
+    if (!missions.length) {
+      list.innerHTML = '<div style="padding:14px;font-size:12px;color:var(--muted);">No missions yet.<br>Draw a polygon and generate one.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    missions.forEach(m => {
+      const div = document.createElement('div');
+      div.className = 'mission-item' + (m.id === selectedMissionId ? ' selected' : '');
+      div.dataset.id = m.id;
+      const d = new Date(m.created_at * 1000);
+      const dateStr = d.toLocaleDateString();
+      div.innerHTML = `
+        <div class="mission-item-name">
+          ${m.name}
+          <span class="mission-status status-${m.status}">${m.status.replace('_', ' ')}</span>
+        </div>
+        <div class="mission-item-meta">${m.mode} · ${m.altitude}m · ${dateStr}</div>
+      `;
+      div.addEventListener('click', () => visualizeMission(m.id, div));
+      list.appendChild(div);
+    });
+  } catch (e) {
+    list.innerHTML = '<div style="padding:14px;font-size:12px;color:var(--muted);">Failed to load.</div>';
+  }
+}
+
+async function visualizeMission(missionId, el) {
+  document.querySelectorAll('.mission-item.selected').forEach(d => d.classList.remove('selected'));
+  clearMissionLayers();
+
+  if (selectedMissionId === missionId) {
+    selectedMissionId = null;
+    return;
+  }
+  selectedMissionId = missionId;
+  el.classList.add('selected');
+
+  try {
+    const res = await fetch(`/api/missions/${missionId}/waypoints`);
+    const passes = await res.json();
+
+    passes.forEach(p => {
+      if (!p.waypoints.length) return;
+      const color = p.on_phone ? STATUS_COLORS.on_phone : STATUS_COLORS.planned;
+      const lls = p.waypoints.map(wp => [wp[0], wp[1]]);
+      const line = L.polyline(lls, { color, weight: 1.5, opacity: .8 }).addTo(map);
+      missionLayers.push(line);
+      missionLayers.push(
+        L.circleMarker(lls[0], { radius: 5, color, fillColor: color, fillOpacity: 1 }).addTo(map)
+      );
+    });
+
+    if (missionLayers.length) {
+      map.fitBounds(L.featureGroup(missionLayers).getBounds(), { padding: [40, 40] });
+    }
+  } catch (e) {
+    toast('Failed to load waypoints', 'err');
+  }
+}
+
+document.getElementById('btn-missions').addEventListener('click', () => {
+  const panel = document.getElementById('missions-panel');
+  const isOpen = panel.classList.toggle('open');
+  document.getElementById('btn-missions').classList.toggle('active', isOpen);
+  if (isOpen) loadMissions();
+});
+
+document.getElementById('btn-sync-phone').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-sync-phone');
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+  try {
+    const res = await fetch('/api/missions/sync/sync-phone', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { toast(data.detail || 'Sync failed', 'err'); return; }
+    toast(`Sync done · ${data.matched} matched · ${data.newly_deleted} removed`, 'ok');
+    loadMissions();
+  } catch (e) {
+    toast('Sync failed — phone plugged in?', 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📱 Sync';
+  }
+});
 </script>
 </body>
 </html>
