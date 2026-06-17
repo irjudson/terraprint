@@ -33,7 +33,14 @@ from web.db import (
     list_missions as _db_list_missions,
     get_mission_waypoints as _db_get_mission_waypoints,
     sync_from_phone as _db_sync_from_phone,
+    log_flight as _db_log_flight,
+    list_flights as _db_list_flights,
+    update_flight_status as _db_update_flight_status,
+    mark_flight_done as _db_mark_flight_done,
+    _db as _open_db,
 )
+
+DATA_ROOT = Path(__file__).parent.parent / "data"
 
 app = FastAPI(title="Terraprint Mission Planner")
 
@@ -217,6 +224,17 @@ class SaveMissionRequest(BaseModel):
     name: str
 
 
+class LogFlightRequest(BaseModel):
+    raw_dir: str
+    photo_count: int
+    flight_date: Optional[float] = None
+
+
+class FlightStatusRequest(BaseModel):
+    odm_status: Optional[str] = None
+    terrain_status: Optional[str] = None
+
+
 @app.post("/api/missions")
 async def save_mission_endpoint(req: SaveMissionRequest):
     job = _jobs.get(req.job_id)
@@ -310,6 +328,116 @@ async def sync_phone(mission_id: str):  # mission_id unused — global sync
 
         counts = _db_sync_from_phone(rows)
         return {"ok": True, **counts, "phone_total": len(rows)}
+
+    except HTTPException:
+        raise
+    except SystemExit:
+        raise HTTPException(503, "iPhone not connected — check USB cable and unlock the phone.")
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/api/raw-dirs")
+async def list_raw_dirs():
+    raw_root = DATA_ROOT / "00_raw"
+    if not raw_root.exists():
+        return []
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".dng"}
+    result = []
+    for d in sorted(raw_root.iterdir()):
+        if d.is_dir():
+            count = sum(1 for f in d.iterdir() if f.suffix.lower() in IMAGE_EXTS)
+            result.append({"dir": d.name, "photo_count": count})
+    return result
+
+
+@app.get("/api/missions/{mission_id}/flights")
+async def get_flights(mission_id: str):
+    return _db_list_flights(mission_id)
+
+
+@app.post("/api/missions/{mission_id}/flights")
+async def log_flight(mission_id: str, req: LogFlightRequest):
+    flight_id = _db_log_flight(mission_id, req.raw_dir, req.photo_count, req.flight_date)
+    return {"flight_id": flight_id}
+
+
+@app.patch("/api/flights/{flight_id}")
+async def update_flight(flight_id: str, req: FlightStatusRequest):
+    _db_update_flight_status(flight_id, req.odm_status, req.terrain_status)
+    return {"ok": True}
+
+
+@app.post("/api/flights/{flight_id}/clear")
+async def clear_flight(flight_id: str, delete_from_phone: bool = False):
+    _db_mark_flight_done(flight_id)
+
+    if not delete_from_phone:
+        return {"ok": True, "phone_deleted": 0}
+
+    # Find the mission and its active phone passes
+    with _open_db() as con:
+        row = con.execute("SELECT mission_id FROM flights WHERE id=?", (flight_id,)).fetchone()
+        if not row:
+            return {"ok": True, "phone_deleted": 0}
+        mid = row["mission_id"]
+        passes = con.execute(
+            """SELECT id, phone_mission_id FROM mission_passes
+               WHERE mission_id=? AND phone_mission_id IS NOT NULL
+               AND deleted_from_phone_at IS NULL""",
+            (mid,),
+        ).fetchall()
+
+    if not passes:
+        return {"ok": True, "phone_deleted": 0}
+
+    try:
+        from skyrover_ios_bridge import MISSION_DB, MISSION_ROOT, _afc_session, _get_lockdown, _read, _write
+
+        try:
+            lockdown = await asyncio.wait_for(_get_lockdown(), timeout=8.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(503, "iPhone not connected.")
+
+        now = time.time()
+        phone_deleted = 0
+
+        async with _afc_session(lockdown) as afc:
+            db_bytes = await _read(afc, MISSION_DB)
+            with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as f:
+                f.write(db_bytes)
+                tmp = f.name
+
+            try:
+                import sqlite3 as _sq
+                pcon = _sq.connect(tmp)
+                for p in passes:
+                    pmid = p["phone_mission_id"]
+                    pcon.execute(
+                        "UPDATE kmzTable SET deleteTime=? WHERE missionId=?", (now, pmid)
+                    )
+                    kmz_path = f"{MISSION_ROOT}/{pmid}/{pmid}.kmz"
+                    try:
+                        await afc.rm(kmz_path, force=True)
+                    except Exception:
+                        pass
+                    phone_deleted += 1
+                pcon.commit()
+                pcon.close()
+                with open(tmp, "rb") as f:
+                    await _write(afc, MISSION_DB, f.read())
+            finally:
+                Path(tmp).unlink(missing_ok=True)
+
+        now_local = time.time()
+        with _open_db() as con:
+            for p in passes:
+                con.execute(
+                    "UPDATE mission_passes SET deleted_from_phone_at=? WHERE id=?",
+                    (now_local, p["id"]),
+                )
+
+        return {"ok": True, "phone_deleted": phone_deleted}
 
     except HTTPException:
         raise
