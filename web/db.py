@@ -147,7 +147,7 @@ def get_mission_waypoints(mission_id: str) -> list:
     """Return passes with their waypoints for map rendering."""
     con = _connect()
     passes = con.execute(
-        "SELECT pass_name, waypoints, phone_mission_id FROM mission_passes WHERE mission_id=?",
+        "SELECT pass_name, waypoints, phone_mission_id, deleted_from_phone_at FROM mission_passes WHERE mission_id=?",
         (mission_id,),
     ).fetchall()
     con.close()
@@ -155,7 +155,7 @@ def get_mission_waypoints(mission_id: str) -> list:
         {
             "pass_name": p["pass_name"],
             "waypoints": json.loads(p["waypoints"]) if p["waypoints"] else [],
-            "on_phone":  bool(p["phone_mission_id"]),
+            "on_phone":  bool(p["phone_mission_id"]) and not p["deleted_from_phone_at"],
         }
         for p in passes
     ]
