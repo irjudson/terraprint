@@ -800,7 +800,7 @@ function _renderFlight(f, missionId, hasPhonePass) {
   `;
   div.querySelector('.btn-clear-flight').addEventListener('click', e => {
     e.stopPropagation();
-    _clearFlight(f.id, missionId, hasPhonePass, div.closest('.mission-flights'));
+    _clearFlight(f.id, missionId, hasPhonePass, div);
   });
   return div;
 }
@@ -809,6 +809,11 @@ async function _loadFlights(missionId, container, hasPhonePass) {
   container.innerHTML = '<div style="padding:4px 0;font-size:11px;color:var(--muted);">Loading…</div>';
   try {
     const res = await fetch(`/api/missions/${missionId}/flights`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      container.innerHTML = `<div style="padding:4px 0;font-size:11px;color:var(--muted);">${err.detail || 'Failed to load flights.'}</div>`;
+      return;
+    }
     const flights = await res.json();
     container.innerHTML = '';
     flights.forEach(f => container.appendChild(_renderFlight(f, missionId, hasPhonePass)));
