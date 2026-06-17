@@ -234,3 +234,54 @@ def sync_from_phone(phone_rows: list) -> dict:
             imported += 1
 
     return {"matched": matched, "newly_deleted": newly_deleted, "imported": imported}
+
+
+def log_flight(mission_id: str, raw_dir: str, photo_count: int,
+               flight_date: float | None = None) -> str:
+    """Create a flight record for a mission. Returns new flight id."""
+    flight_id = str(uuid.uuid4())
+    now = time.time()
+    with _db() as con:
+        con.execute(
+            """INSERT INTO flights (id, mission_id, flight_date, photo_count, raw_dir)
+               VALUES (?,?,?,?,?)""",
+            (flight_id, mission_id, flight_date or now, photo_count, raw_dir),
+        )
+        passes  = con.execute("SELECT * FROM mission_passes WHERE mission_id=?", (mission_id,)).fetchall()
+        flights = con.execute("SELECT * FROM flights WHERE mission_id=?", (mission_id,)).fetchall()
+        status  = _derive_status(passes, flights)
+        con.execute("UPDATE missions SET status=?, updated_at=? WHERE id=?", (status, now, mission_id))
+    return flight_id
+
+
+def list_flights(mission_id: str) -> list:
+    """Return all flights for a mission ordered by flight_date."""
+    with _db() as con:
+        rows = con.execute(
+            "SELECT * FROM flights WHERE mission_id=? ORDER BY flight_date DESC",
+            (mission_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_flight_status(flight_id: str, odm_status: str | None = None,
+                         terrain_status: str | None = None) -> None:
+    """Patch odm_status and/or terrain_status; re-derives parent mission status."""
+    now = time.time()
+    with _db() as con:
+        if odm_status is not None:
+            con.execute("UPDATE flights SET odm_status=? WHERE id=?", (odm_status, flight_id))
+        if terrain_status is not None:
+            con.execute("UPDATE flights SET terrain_status=? WHERE id=?", (terrain_status, flight_id))
+        row = con.execute("SELECT mission_id FROM flights WHERE id=?", (flight_id,)).fetchone()
+        if row:
+            mid = row["mission_id"]
+            passes  = con.execute("SELECT * FROM mission_passes WHERE mission_id=?", (mid,)).fetchall()
+            flights = con.execute("SELECT * FROM flights WHERE mission_id=?", (mid,)).fetchall()
+            status  = _derive_status(passes, flights)
+            con.execute("UPDATE missions SET status=?, updated_at=? WHERE id=?", (status, now, mid))
+
+
+def mark_flight_done(flight_id: str) -> None:
+    """Mark both pipeline stages done and promote mission to processed."""
+    update_flight_status(flight_id, odm_status="done", terrain_status="done")

@@ -168,3 +168,69 @@ def test_sync_does_not_reimport_known_missions():
     assert result["imported"] == 0
     assert result["matched"] == 1
     assert len(db.list_missions()) == 1
+
+
+# ── flights ───────────────────────────────────────────────────────────────────
+
+def test_log_flight_returns_id():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    fid = db.log_flight(mid, "00_raw/test_flight", 120)
+    assert len(fid) == 36
+
+
+def test_log_flight_sets_mission_flown():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    db.log_flight(mid, "00_raw/test_flight", 120)
+    rows = db.list_missions()
+    assert rows[0]["status"] == "flown"
+
+
+def test_list_flights_returns_rows():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    db.log_flight(mid, "00_raw/f1", 50)
+    db.log_flight(mid, "00_raw/f2", 80)
+    flights = db.list_flights(mid)
+    assert len(flights) == 2
+    assert {f["raw_dir"] for f in flights} == {"00_raw/f1", "00_raw/f2"}
+
+
+def test_list_flights_keys():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    fid = db.log_flight(mid, "00_raw/f1", 42)
+    flights = db.list_flights(mid)
+    f = flights[0]
+    assert f["id"] == fid
+    assert f["photo_count"] == 42
+    assert f["odm_status"] == "pending"
+    assert f["terrain_status"] == "pending"
+
+
+def test_update_flight_odm_status():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    fid = db.log_flight(mid, "00_raw/f1", 42)
+    db.update_flight_status(fid, odm_status="running")
+    flights = db.list_flights(mid)
+    assert flights[0]["odm_status"] == "running"
+    assert db.list_missions()[0]["status"] == "processing"
+
+
+def test_update_flight_terrain_status():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    fid = db.log_flight(mid, "00_raw/f1", 42)
+    db.update_flight_status(fid, odm_status="done", terrain_status="done")
+    assert db.list_missions()[0]["status"] == "processed"
+
+
+def test_mark_flight_done():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    fid = db.log_flight(mid, "00_raw/f1", 42)
+    db.mark_flight_done(fid)
+    flights = db.list_flights(mid)
+    assert flights[0]["odm_status"] == "done"
+    assert flights[0]["terrain_status"] == "done"
+    assert db.list_missions()[0]["status"] == "processed"
+
+
+def test_list_flights_empty():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    assert db.list_flights(mid) == []
