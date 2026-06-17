@@ -26,7 +26,22 @@ from generate_survey import (
     camera_footprint, lawnmower_grid, make_kmz, make_photogrammetry_missions,
 )
 
+from web.db import (
+    init_db,
+    save_mission as _db_save_mission,
+    record_push as _db_record_push,
+    list_missions as _db_list_missions,
+    get_mission_waypoints as _db_get_mission_waypoints,
+    sync_from_phone as _db_sync_from_phone,
+)
+
 app = FastAPI(title="Terraprint Mission Planner")
+
+
+@app.on_event("startup")
+async def _startup():
+    init_db()
+
 
 # In-process job store (single-user local app; no persistence needed)
 _jobs: dict[str, dict] = {}
@@ -142,8 +157,18 @@ async def generate(req: SurveyRequest):
             waypoints, req.altitude, req.speed, tmp_dir, "mission",
             oblique_pitch=req.gimbal_pitch if req.gimbal_pitch != -90.0 else -45.0,
         )
-        _jobs[job_id] = {"mode": "photogrammetry", "name": req.name,
-                         "passes": [dict(p, waypoints=waypoints) for p in passes]}
+        _jobs[job_id] = {
+            "mode": "photogrammetry",
+            "name": req.name,
+            "passes": [dict(p, waypoints=waypoints) for p in passes],
+            "polygon": req.polygon,
+            "params": {
+                "altitude": req.altitude,
+                "overlap": req.overlap,
+                "front_overlap": req.front_overlap,
+                "speed": req.speed,
+            },
+        }
         n_passes = len(passes)
         return {
             "job_id":         job_id,
@@ -161,8 +186,19 @@ async def generate(req: SurveyRequest):
     tmp_path = Path(tmp.name)
     tmp.close()
     make_kmz(waypoints, req.altitude, req.speed, tmp_path, req.gimbal_pitch)
-    _jobs[job_id] = {"mode": "survey", "kmz_path": str(tmp_path),
-                     "name": req.name, "waypoints": waypoints}
+    _jobs[job_id] = {
+        "mode": "survey",
+        "kmz_path": str(tmp_path),
+        "name": req.name,
+        "waypoints": waypoints,
+        "polygon": req.polygon,
+        "params": {
+            "altitude": req.altitude,
+            "overlap": req.overlap,
+            "front_overlap": req.front_overlap,
+            "speed": req.speed,
+        },
+    }
     return {
         "job_id":         job_id,
         "mode":           "survey",
@@ -174,6 +210,50 @@ async def generate(req: SurveyRequest):
         "gsd_cm":         gsd_cm,
         "gimbal_pitch":   req.gimbal_pitch,
     }
+
+
+class SaveMissionRequest(BaseModel):
+    job_id: str
+    name: str
+
+
+@app.post("/api/missions")
+async def save_mission_endpoint(req: SaveMissionRequest):
+    job = _jobs.get(req.job_id)
+    if not job:
+        raise HTTPException(404, "Job not found — re-generate first.")
+
+    if job["mode"] == "photogrammetry":
+        passes = [
+            {
+                "pass_name": p["pass"],
+                "kmz_path":  p.get("kmz_path"),
+                "waypoints": p["waypoints"],
+            }
+            for p in job["passes"]
+        ]
+    else:
+        passes = [
+            {
+                "pass_name": "survey",
+                "kmz_path":  job.get("kmz_path"),
+                "waypoints": job["waypoints"],
+            }
+        ]
+
+    params = job.get("params", {})
+    mission_id = _db_save_mission(
+        name=req.name,
+        polygon=job.get("polygon", []),
+        altitude=params.get("altitude", 80),
+        overlap=params.get("overlap", 80),
+        front_overlap=params.get("front_overlap"),
+        speed=params.get("speed", 8),
+        mode=job["mode"],
+        passes=passes,
+    )
+    _jobs[req.job_id]["mission_id"] = mission_id
+    return {"mission_id": mission_id}
 
 
 def _db_insert_mission(con: sqlite3.Connection, container_uuid: str,
@@ -268,6 +348,9 @@ async def push(job_id: str):
                 await _mkdir(afc, dest_dir)
                 await _write(afc, f"{dest_dir}/{mission_id}.kmz", kmz_path.read_bytes())
                 mission_ids.append(mission_id)
+                if "mission_id" in job:
+                    pass_label = item_name.split("(")[-1].rstrip(")") if "(" in item_name else "survey"
+                    _db_record_push(job["mission_id"], pass_label, mission_id)
 
             con.commit()
             con.close()
