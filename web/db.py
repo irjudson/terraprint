@@ -13,10 +13,13 @@ PASS_SUFFIXES = {"nadir", "north", "east", "south", "west", "oblique", "grid"}
 
 
 def _base_name(name: str) -> tuple[str, str]:
-    """Split 'BJR nadir' → ('BJR', 'nadir'). No suffix → (name, 'survey')."""
+    """Split 'BJR nadir' or 'Mission 2026-05-29 (nadir)' → (base, suffix).
+    Strips surrounding parentheses from suffix before matching. No suffix → (name, 'survey')."""
     parts = name.rsplit(" ", 1)
-    if len(parts) == 2 and parts[1].lower() in PASS_SUFFIXES:
-        return parts[0].strip(), parts[1].lower()
+    if len(parts) == 2:
+        suffix = parts[1].lower().strip("()")
+        if suffix in PASS_SUFFIXES:
+            return parts[0].strip(), suffix
     return name.strip(), "survey"
 
 

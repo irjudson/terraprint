@@ -27,6 +27,7 @@ services:
       MAPBOX_TOKEN: ${MAPBOX_TOKEN:-}
     volumes:
       - /var/run/usbmuxd:/var/run/usbmuxd
+      - ./data:/app/data
     restart: unless-stopped
 
   odm:

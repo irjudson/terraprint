@@ -244,6 +244,12 @@ def test_base_name_strips_known_suffix():
     assert db._base_name("Site west") == ("Site", "west")
 
 
+def test_base_name_strips_parenthesized_suffix():
+    assert db._base_name("Mission 2026-05-29 (nadir)") == ("Mission 2026-05-29", "nadir")
+    assert db._base_name("BJR Survey (west)") == ("BJR Survey", "west")
+    assert db._base_name("Ranch (north)") == ("Ranch", "north")
+
+
 def test_base_name_no_suffix():
     assert db._base_name("Plain survey") == ("Plain survey", "survey")
     assert db._base_name("NoSuffix") == ("NoSuffix", "survey")
