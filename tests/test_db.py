@@ -325,3 +325,25 @@ def test_base_name_single_word_that_is_suffix():
 
 def test_base_name_empty_string():
     assert db._base_name("") == ("", "survey")
+
+
+# ── delete_mission ────────────────────────────────────────────────────────────
+
+def test_delete_mission_removes_mission():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    result = db.delete_mission(mid)
+    assert result is True
+    assert db.list_missions() == []
+
+
+def test_delete_mission_cascades_passes_and_flights():
+    mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
+    db.log_flight(mid, "00_raw/test", 42)
+    db.delete_mission(mid)
+    with db._db() as con:
+        assert con.execute("SELECT COUNT(*) FROM mission_passes WHERE mission_id=?", (mid,)).fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM flights WHERE mission_id=?", (mid,)).fetchone()[0] == 0
+
+
+def test_delete_mission_returns_false_for_missing():
+    assert db.delete_mission("no-such-id") is False

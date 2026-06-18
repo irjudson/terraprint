@@ -37,6 +37,7 @@ from web.db import (
     list_flights as _db_list_flights,
     update_flight_status as _db_update_flight_status,
     mark_flight_done as _db_mark_flight_done,
+    delete_mission as _db_delete_mission,
     _db as _open_db,
 )
 
@@ -462,6 +463,75 @@ async def clear_flight(flight_id: str, delete_from_phone: bool = False):
         raise HTTPException(503, "iPhone not connected — check USB cable and unlock the phone.")
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+@app.delete("/api/missions/{mission_id}")
+async def delete_mission(mission_id: str, delete_from_phone: bool = False):
+    if not delete_from_phone:
+        existed = _db_delete_mission(mission_id)
+        if not existed:
+            raise HTTPException(404, "Mission not found")
+        return {"ok": True, "phone_deleted": 0}
+
+    # Gather phone passes before deleting
+    with _open_db() as con:
+        exists = con.execute("SELECT 1 FROM missions WHERE id=?", (mission_id,)).fetchone()
+        if not exists:
+            raise HTTPException(404, "Mission not found")
+        passes = con.execute(
+            """SELECT id, phone_mission_id FROM mission_passes
+               WHERE mission_id=? AND phone_mission_id IS NOT NULL
+               AND deleted_from_phone_at IS NULL""",
+            (mission_id,),
+        ).fetchall()
+
+    phone_deleted = 0
+    if passes:
+        try:
+            from skyrover_ios_bridge import MISSION_DB, MISSION_ROOT, _afc_session, _get_lockdown, _read, _write
+
+            try:
+                lockdown = await asyncio.wait_for(_get_lockdown(), timeout=8.0)
+            except asyncio.TimeoutError:
+                raise HTTPException(503, "iPhone not connected.")
+
+            now = time.time()
+            async with _afc_session(lockdown) as afc:
+                db_bytes = await _read(afc, MISSION_DB)
+                with tempfile.NamedTemporaryFile(suffix=".sqlite3", delete=False) as f:
+                    f.write(db_bytes)
+                    tmp = f.name
+                try:
+                    import sqlite3 as _sq
+                    pcon = _sq.connect(tmp)
+                    try:
+                        for p in passes:
+                            pmid = p["phone_mission_id"]
+                            pcon.execute(
+                                "UPDATE kmzTable SET deleteTime=? WHERE missionId=?", (now, pmid)
+                            )
+                            kmz_path = f"{MISSION_ROOT}/{pmid}/{pmid}.kmz"
+                            try:
+                                await afc.rm(kmz_path, force=True)
+                            except Exception:
+                                pass
+                            phone_deleted += 1
+                        pcon.commit()
+                    finally:
+                        pcon.close()
+                    with open(tmp, "rb") as f:
+                        await _write(afc, MISSION_DB, f.read())
+                finally:
+                    Path(tmp).unlink(missing_ok=True)
+        except HTTPException:
+            raise
+        except SystemExit:
+            raise HTTPException(503, "iPhone not connected — check USB cable and unlock the phone.")
+        except Exception as exc:
+            raise HTTPException(500, str(exc))
+
+    _db_delete_mission(mission_id)
+    return {"ok": True, "phone_deleted": phone_deleted}
 
 
 def _db_insert_mission(con: sqlite3.Connection, container_uuid: str,

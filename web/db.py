@@ -308,3 +308,15 @@ def update_flight_status(flight_id: str, odm_status: str | None = None,
 def mark_flight_done(flight_id: str) -> None:
     """Mark both pipeline stages done and promote mission to processed."""
     update_flight_status(flight_id, odm_status="done", terrain_status="done")
+
+
+def delete_mission(mission_id: str) -> bool:
+    """Delete a mission and all its passes and flights. Returns True if mission existed."""
+    with _db() as con:
+        exists = con.execute("SELECT 1 FROM missions WHERE id=?", (mission_id,)).fetchone()
+        if not exists:
+            return False
+        con.execute("DELETE FROM flights WHERE mission_id=?", (mission_id,))
+        con.execute("DELETE FROM mission_passes WHERE mission_id=?", (mission_id,))
+        con.execute("DELETE FROM missions WHERE id=?", (mission_id,))
+    return True
