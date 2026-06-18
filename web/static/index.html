@@ -915,12 +915,10 @@ async function _clearFlight(flightId, missionId, hasPhonePass, container) {
 }
 
 async function _deleteMission(missionId, missionName, hasPhonePass) {
+  if (!confirm(`Delete "${missionName}" and all its flights from Terraprint?`)) return;
   let deleteFromPhone = false;
   if (hasPhonePass) {
-    deleteFromPhone = confirm(`Delete "${missionName}" and all its flights?\n\nAlso remove from Skyrover on phone?`);
-    if (deleteFromPhone === null) return;
-  } else {
-    if (!confirm(`Delete "${missionName}" and all its flights?`)) return;
+    deleteFromPhone = confirm(`Also remove from Skyrover on phone?\n(Cancel = keep on phone)`);
   }
   try {
     const url = `/api/missions/${missionId}${deleteFromPhone ? '?delete_from_phone=true' : ''}`;
