@@ -309,3 +309,13 @@ def test_sync_groups_separate_base_names():
     assert names == {"BJR", "Ranch"}
     for m in missions:
         assert m["pass_count"] == 2
+
+
+def test_base_name_single_word_that_is_suffix():
+    # A name that IS a suffix with no base — should not split
+    assert db._base_name("nadir") == ("nadir", "survey")
+    assert db._base_name("north") == ("north", "survey")
+
+
+def test_base_name_empty_string():
+    assert db._base_name("") == ("", "survey")

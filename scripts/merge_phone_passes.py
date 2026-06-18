@@ -63,7 +63,8 @@ def main() -> None:
 
     for base, passes in sorted(multi.items()):
         canonical = passes[0]["mission_id"]
-        mode = "photogrammetry" if len(passes) >= 4 else "survey"
+        # 2+ passes from the same base name = photogrammetry; 1 pass = survey
+        mode = "photogrammetry" if len(passes) > 1 else "survey"
         print(f"  '{base}'  [{mode}]  {len(passes)} passes:")
         for p in passes:
             tag = " ← keep" if p["mission_id"] == canonical else "   merge+delete"
@@ -78,7 +79,8 @@ def main() -> None:
     missions_deleted = 0
     for base, passes in multi.items():
         canonical = passes[0]["mission_id"]
-        mode = "photogrammetry" if len(passes) >= 4 else "survey"
+        # 2+ passes from the same base name = photogrammetry; 1 pass = survey
+        mode = "photogrammetry" if len(passes) > 1 else "survey"
         con.execute(
             "UPDATE missions SET name=?, mode=?, updated_at=? WHERE id=?",
             (base, mode, now, canonical),

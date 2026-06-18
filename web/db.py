@@ -235,6 +235,7 @@ def sync_from_phone(phone_rows: list) -> dict:
 
         for base, passes in groups.items():
             mission_id = str(uuid.uuid4())
+            # 2+ passes from the same base name = photogrammetry; 1 pass = survey
             mode = "photogrammetry" if len(passes) > 1 else "survey"
             con.execute(
                 """INSERT INTO missions
