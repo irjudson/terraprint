@@ -262,6 +262,18 @@
       cursor: pointer; line-height: 1; flex-shrink: 0;
     }
     .mission-delete-btn:hover { background: #c0392b; color: #fff; }
+    .inline-confirm {
+      display: flex; align-items: center; gap: 8px; padding: 6px 14px;
+      background: rgba(192,57,43,.12); border-left: 3px solid #c0392b;
+      font-size: 11px; color: var(--text);
+    }
+    .inline-confirm span { flex: 1; }
+    .inline-confirm button {
+      padding: 2px 8px; border: none; border-radius: 3px; font-size: 10px;
+      font-weight: 700; cursor: pointer;
+    }
+    .inline-confirm .ic-yes { background: #c0392b; color: #fff; }
+    .inline-confirm .ic-no  { background: var(--card); color: var(--muted); }
   </style>
 </head>
 <body>
@@ -891,11 +903,10 @@ async function _loadFlights(missionId, container, hasPhonePass) {
 }
 
 async function _clearFlight(flightId, missionId, hasPhonePass, container) {
+  if (!await _inlineConfirm(container, 'Mark this flight as done?')) return;
   let deleteFromPhone = false;
   if (hasPhonePass) {
-    deleteFromPhone = confirm('Also remove mission from Skyrover on phone?');
-  } else {
-    if (!confirm('Mark this flight as done?')) return;
+    deleteFromPhone = await _inlineConfirm(container, 'Also remove mission from Skyrover on phone?');
   }
   try {
     const url = `/api/flights/${flightId}/clear${deleteFromPhone ? '?delete_from_phone=true' : ''}`;
@@ -914,11 +925,29 @@ async function _clearFlight(flightId, missionId, hasPhonePass, container) {
   } catch { toast('Clear failed', 'err'); }
 }
 
-async function _deleteMission(missionId, missionName, hasPhonePass) {
-  if (!confirm(`Delete "${missionName}" and all its flights from Terraprint?`)) return;
+function _inlineConfirm(anchorEl, message) {
+  document.querySelectorAll('.inline-confirm').forEach(el => el.remove());
+  return new Promise(resolve => {
+    const bar = document.createElement('div');
+    bar.className = 'inline-confirm';
+    const msg = document.createElement('span');
+    msg.textContent = message;
+    const yes = document.createElement('button');
+    yes.className = 'ic-yes'; yes.textContent = 'Yes';
+    const no = document.createElement('button');
+    no.className = 'ic-no'; no.textContent = 'No';
+    yes.onclick = e => { e.stopPropagation(); bar.remove(); resolve(true); };
+    no.onclick  = e => { e.stopPropagation(); bar.remove(); resolve(false); };
+    bar.appendChild(msg); bar.appendChild(yes); bar.appendChild(no);
+    anchorEl.insertAdjacentElement('afterend', bar);
+  });
+}
+
+async function _deleteMission(missionId, missionName, hasPhonePass, anchorEl) {
+  if (!await _inlineConfirm(anchorEl, `Delete "${missionName}"?`)) return;
   let deleteFromPhone = false;
   if (hasPhonePass) {
-    deleteFromPhone = confirm(`Also remove from Skyrover on phone?\n(Cancel = keep on phone)`);
+    deleteFromPhone = await _inlineConfirm(anchorEl, 'Also remove from Skyrover on phone?');
   }
   try {
     const url = `/api/missions/${missionId}${deleteFromPhone ? '?delete_from_phone=true' : ''}`;
@@ -972,7 +1001,7 @@ async function loadMissions() {
       delBtn.textContent = '✕';
       delBtn.addEventListener('click', e => {
         e.stopPropagation();
-        _deleteMission(m.id, m.name, m.passes_on_phone > 0);
+        _deleteMission(m.id, m.name, m.passes_on_phone > 0, item);
       });
       nameRow.appendChild(delBtn);
 
