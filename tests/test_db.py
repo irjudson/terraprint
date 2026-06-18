@@ -234,3 +234,78 @@ def test_mark_flight_done():
 def test_list_flights_empty():
     mid = db.save_mission("BJR", POLY, 80, 80, None, 8, "survey", _one_pass())
     assert db.list_flights(mid) == []
+
+
+# ── _base_name ────────────────────────────────────────────────────────────────
+
+def test_base_name_strips_known_suffix():
+    assert db._base_name("BJR nadir") == ("BJR", "nadir")
+    assert db._base_name("Ranch north") == ("Ranch", "north")
+    assert db._base_name("Site west") == ("Site", "west")
+
+
+def test_base_name_no_suffix():
+    assert db._base_name("Plain survey") == ("Plain survey", "survey")
+    assert db._base_name("NoSuffix") == ("NoSuffix", "survey")
+
+
+def test_base_name_case_insensitive():
+    assert db._base_name("BJR Nadir") == ("BJR", "nadir")
+    assert db._base_name("BJR NORTH") == ("BJR", "north")
+
+
+# ── sync grouping ─────────────────────────────────────────────────────────────
+
+def test_sync_groups_photogrammetry_passes():
+    phone_rows = [
+        {"missionId": f"P{i}", "name": f"BJR {s}", "deleteTime": -1, "waypoints": WAYPOINTS}
+        for i, s in enumerate(["nadir", "north", "east", "south", "west"])
+    ]
+    result = db.sync_from_phone(phone_rows)
+    assert result["imported"] == 5
+    missions = db.list_missions()
+    assert len(missions) == 1
+    assert missions[0]["name"] == "BJR"
+    assert missions[0]["mode"] == "photogrammetry"
+    assert missions[0]["pass_count"] == 5
+    assert missions[0]["passes_on_phone"] == 5
+
+
+def test_sync_grouped_pass_names():
+    phone_rows = [
+        {"missionId": f"Q{i}", "name": f"BJR {s}", "deleteTime": -1, "waypoints": WAYPOINTS}
+        for i, s in enumerate(["nadir", "north"])
+    ]
+    db.sync_from_phone(phone_rows)
+    missions = db.list_missions()
+    passes = db.get_mission_waypoints(missions[0]["id"])
+    pass_names = {p["pass_name"] for p in passes}
+    assert pass_names == {"nadir", "north"}
+
+
+def test_sync_leaves_plain_mission_alone():
+    result = db.sync_from_phone([
+        {"missionId": "PLAIN-1", "name": "Ranch survey", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    assert result["imported"] == 1
+    missions = db.list_missions()
+    assert len(missions) == 1
+    assert missions[0]["mode"] == "survey"
+    assert missions[0]["pass_count"] == 1
+
+
+def test_sync_groups_separate_base_names():
+    phone_rows = [
+        {"missionId": "A1", "name": "BJR nadir",   "deleteTime": -1, "waypoints": WAYPOINTS},
+        {"missionId": "A2", "name": "BJR north",   "deleteTime": -1, "waypoints": WAYPOINTS},
+        {"missionId": "B1", "name": "Ranch nadir", "deleteTime": -1, "waypoints": WAYPOINTS},
+        {"missionId": "B2", "name": "Ranch north", "deleteTime": -1, "waypoints": WAYPOINTS},
+    ]
+    result = db.sync_from_phone(phone_rows)
+    assert result["imported"] == 4
+    missions = db.list_missions()
+    assert len(missions) == 2
+    names = {m["name"] for m in missions}
+    assert names == {"BJR", "Ranch"}
+    for m in missions:
+        assert m["pass_count"] == 2

@@ -9,6 +9,16 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).parent.parent / "data" / "missions.db"
 
+PASS_SUFFIXES = {"nadir", "north", "east", "south", "west", "oblique", "grid"}
+
+
+def _base_name(name: str) -> tuple[str, str]:
+    """Split 'BJR nadir' → ('BJR', 'nadir'). No suffix → (name, 'survey')."""
+    parts = name.rsplit(" ", 1)
+    if len(parts) == 2 and parts[1].lower() in PASS_SUFFIXES:
+        return parts[0].strip(), parts[1].lower()
+    return name.strip(), "survey"
+
 
 @contextmanager
 def _db():
@@ -214,24 +224,33 @@ def sync_from_phone(phone_rows: list) -> dict:
             status  = _derive_status(passes, flights)
             con.execute("UPDATE missions SET status=?, updated_at=? WHERE id=?", (status, now, mid))
 
-        # Import phone missions that aren't in our DB yet
+        # Import phone missions that aren't in our DB yet — group by base name
+        groups: dict[str, list] = {}
         for phone_id in phone_ids - known_phone_ids:
             row = by_id[phone_id]
+            base, suffix = _base_name(row.get("name", ""))
+            groups.setdefault(base, []).append(
+                {"phone_id": phone_id, "suffix": suffix, "row": row}
+            )
+
+        for base, passes in groups.items():
             mission_id = str(uuid.uuid4())
+            mode = "photogrammetry" if len(passes) > 1 else "survey"
             con.execute(
                 """INSERT INTO missions
                    (id, name, polygon, mode, status, created_at, updated_at)
-                   VALUES (?,?,'[]','survey','on_phone',?,?)""",
-                (mission_id, row["name"], now, now),
+                   VALUES (?,?,'[]',?,'on_phone',?,?)""",
+                (mission_id, base, mode, now, now),
             )
-            con.execute(
-                """INSERT INTO mission_passes
-                   (id, mission_id, pass_name, phone_mission_id, waypoints, pushed_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (str(uuid.uuid4()), mission_id, "survey", phone_id,
-                 json.dumps(row.get("waypoints", [])), now),
-            )
-            imported += 1
+            for p in passes:
+                con.execute(
+                    """INSERT INTO mission_passes
+                       (id, mission_id, pass_name, phone_mission_id, waypoints, pushed_at)
+                       VALUES (?,?,?,?,?,?)""",
+                    (str(uuid.uuid4()), mission_id, p["suffix"], p["phone_id"],
+                     json.dumps(p["row"].get("waypoints", [])), now),
+                )
+                imported += 1
 
     return {"matched": matched, "newly_deleted": newly_deleted, "imported": imported}
 
