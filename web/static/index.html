@@ -195,7 +195,7 @@
     }
     .mission-item:hover { background: rgba(255,255,255,.04); }
     .mission-item.selected { background: var(--card); }
-    .mission-item-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+    .mission-item-name { font-size: 13px; font-weight: 600; margin-bottom: 2px; display: flex; align-items: center; gap: 6px; }
     .mission-item-meta { font-size: 11px; color: var(--muted); }
     .mission-status {
       display: inline-block; padding: 1px 6px; border-radius: 3px;
@@ -256,6 +256,12 @@
       font-weight: 600; cursor: pointer;
     }
     .btn-log-confirm:disabled { opacity: .4; cursor: not-allowed; }
+    .mission-delete-btn {
+      margin-left: auto; padding: 1px 5px; border: none; border-radius: 3px;
+      background: transparent; color: var(--muted); font-size: 11px;
+      cursor: pointer; line-height: 1; flex-shrink: 0;
+    }
+    .mission-delete-btn:hover { background: #c0392b; color: #fff; }
   </style>
 </head>
 <body>
@@ -808,14 +814,31 @@ function _renderFlight(f, missionId, hasPhonePass) {
 async function _loadFlights(missionId, container, hasPhonePass) {
   container.innerHTML = '<div style="padding:4px 0;font-size:11px;color:var(--muted);">Loading…</div>';
   try {
-    const res = await fetch(`/api/missions/${missionId}/flights`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+    const [flightsRes, passesRes] = await Promise.all([
+      fetch(`/api/missions/${missionId}/flights`),
+      fetch(`/api/missions/${missionId}/waypoints`),
+    ]);
+    if (!flightsRes.ok) {
+      const err = await flightsRes.json().catch(() => ({}));
       container.innerHTML = `<div style="padding:4px 0;font-size:11px;color:var(--muted);">${err.detail || 'Failed to load flights.'}</div>`;
       return;
     }
-    const flights = await res.json();
+    const [flights, passes] = await Promise.all([flightsRes.json(), passesRes.json()]);
     container.innerHTML = '';
+
+    // Pass list
+    if (passes.length) {
+      const passRow = document.createElement('div');
+      passRow.style.cssText = 'padding:4px 0 6px;font-size:11px;color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;';
+      passes.forEach(p => {
+        const chip = document.createElement('span');
+        chip.style.cssText = `padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;background:${p.on_phone ? '#1a2a4a' : '#2a2a2a'};color:${p.on_phone ? '#4a90d9' : '#666'};`;
+        chip.textContent = (p.pass_name || 'survey') + (p.on_phone ? ' ✓' : '');
+        passRow.appendChild(chip);
+      });
+      container.appendChild(passRow);
+    }
+
     flights.forEach(f => container.appendChild(_renderFlight(f, missionId, hasPhonePass)));
 
     // Log flight row
@@ -891,6 +914,31 @@ async function _clearFlight(flightId, missionId, hasPhonePass, container) {
   } catch { toast('Clear failed', 'err'); }
 }
 
+async function _deleteMission(missionId, missionName, hasPhonePass) {
+  let deleteFromPhone = false;
+  if (hasPhonePass) {
+    deleteFromPhone = confirm(`Delete "${missionName}" and all its flights?\n\nAlso remove from Skyrover on phone?`);
+    if (deleteFromPhone === null) return;
+  } else {
+    if (!confirm(`Delete "${missionName}" and all its flights?`)) return;
+  }
+  try {
+    const url = `/api/missions/${missionId}${deleteFromPhone ? '?delete_from_phone=true' : ''}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    const data = await res.json();
+    if (!res.ok) { toast(data.detail || 'Delete failed', 'err'); return; }
+    const msg = deleteFromPhone && data.phone_deleted > 0
+      ? `Deleted · ${data.phone_deleted} removed from phone`
+      : 'Mission deleted';
+    toast(msg, 'ok');
+    if (_selectedMissionId === missionId) {
+      _clearMissionLayers();
+      _selectedMissionId = null;
+    }
+    loadMissions();
+  } catch { toast('Delete failed', 'err'); }
+}
+
 async function loadMissions() {
   const list = document.getElementById('missions-list');
   try {
@@ -908,13 +956,21 @@ async function loadMissions() {
       item.className = 'mission-item';
       item.dataset.id = m.id;
       const d = new Date((m.created_at || 0) * 1000);
+      const passInfo = m.pass_count > 1
+        ? `${m.pass_count} passes (${m.passes_on_phone} on phone)`
+        : `${m.passes_on_phone > 0 ? '1 pass on phone' : '1 pass'}`;
       item.innerHTML = `
         <div class="mission-item-name">
           ${m.name}
           <span class="mission-status status-${m.status}">${m.status.replace(/_/g, ' ')}</span>
+          <button class="mission-delete-btn" title="Delete mission">✕</button>
         </div>
-        <div class="mission-item-meta">${m.mode} · ${m.altitude || '?'}m · ${d.toLocaleDateString()}</div>
+        <div class="mission-item-meta">${m.mode} · ${m.altitude || '?'}m · ${passInfo} · ${d.toLocaleDateString()}</div>
       `;
+      item.querySelector('.mission-delete-btn').addEventListener('click', e => {
+        e.stopPropagation();
+        _deleteMission(m.id, m.name, m.passes_on_phone > 0);
+      });
 
       const flightsPanel = document.createElement('div');
       flightsPanel.className = 'mission-flights';
