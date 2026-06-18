@@ -81,6 +81,12 @@ def init_db() -> None:
                 terrain_status TEXT DEFAULT 'pending'
             )
         """)
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_phone_missions (
+                phone_mission_id TEXT PRIMARY KEY,
+                deleted_at       REAL
+            )
+        """)
 
 
 def _derive_status(passes: list, flights: list) -> str:
@@ -203,6 +209,11 @@ def sync_from_phone(phone_rows: list) -> dict:
             "SELECT id, phone_mission_id, mission_id FROM mission_passes WHERE phone_mission_id IS NOT NULL"
         ).fetchall()
         known_phone_ids = {p["phone_mission_id"] for p in our_passes}
+        blocked_ids = {
+            r["phone_mission_id"] for r in con.execute(
+                "SELECT phone_mission_id FROM deleted_phone_missions"
+            ).fetchall()
+        }
 
         affected_missions = set()
         for p in our_passes:
@@ -229,7 +240,7 @@ def sync_from_phone(phone_rows: list) -> dict:
 
         # Import phone missions that aren't in our DB yet — group by base name
         groups: dict[str, list] = {}
-        for phone_id in phone_ids - known_phone_ids:
+        for phone_id in phone_ids - known_phone_ids - blocked_ids:
             row = by_id[phone_id]
             base, suffix = _base_name(row.get("name", ""))
             groups.setdefault(base, []).append(
@@ -312,10 +323,20 @@ def mark_flight_done(flight_id: str) -> None:
 
 def delete_mission(mission_id: str) -> bool:
     """Delete a mission and all its passes and flights. Returns True if mission existed."""
+    now = time.time()
     with _db() as con:
         exists = con.execute("SELECT 1 FROM missions WHERE id=?", (mission_id,)).fetchone()
         if not exists:
             return False
+        phone_ids = con.execute(
+            "SELECT phone_mission_id FROM mission_passes WHERE mission_id=? AND phone_mission_id IS NOT NULL",
+            (mission_id,),
+        ).fetchall()
+        for row in phone_ids:
+            con.execute(
+                "INSERT OR REPLACE INTO deleted_phone_missions (phone_mission_id, deleted_at) VALUES (?,?)",
+                (row["phone_mission_id"], now),
+            )
         con.execute("DELETE FROM flights WHERE mission_id=?", (mission_id,))
         con.execute("DELETE FROM mission_passes WHERE mission_id=?", (mission_id,))
         con.execute("DELETE FROM missions WHERE id=?", (mission_id,))

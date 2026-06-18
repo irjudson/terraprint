@@ -347,3 +347,32 @@ def test_delete_mission_cascades_passes_and_flights():
 
 def test_delete_mission_returns_false_for_missing():
     assert db.delete_mission("no-such-id") is False
+
+
+# ── delete_mission blocklist ───────────────────────────────────────────────────
+
+def test_delete_mission_blocks_reimport():
+    db.sync_from_phone([
+        {"missionId": "PM-1", "name": "Ranch survey", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    mid = db.list_missions()[0]["id"]
+    db.delete_mission(mid)
+    # Second sync should NOT re-import the deleted mission
+    result = db.sync_from_phone([
+        {"missionId": "PM-1", "name": "Ranch survey", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    assert result["imported"] == 0
+    assert db.list_missions() == []
+
+
+def test_delete_mission_records_phone_ids_in_blocklist():
+    db.sync_from_phone([
+        {"missionId": "PM-BL", "name": "Block me", "deleteTime": -1, "waypoints": WAYPOINTS}
+    ])
+    mid = db.list_missions()[0]["id"]
+    db.delete_mission(mid)
+    with db._db() as con:
+        blocked = {r["phone_mission_id"] for r in con.execute(
+            "SELECT phone_mission_id FROM deleted_phone_missions"
+        ).fetchall()}
+    assert "PM-BL" in blocked
