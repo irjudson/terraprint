@@ -957,18 +957,31 @@ async function loadMissions() {
       const passInfo = m.pass_count > 1
         ? `${m.pass_count} passes (${m.passes_on_phone} on phone)`
         : `${m.passes_on_phone > 0 ? '1 pass on phone' : '1 pass'}`;
-      item.innerHTML = `
-        <div class="mission-item-name">
-          ${m.name}
-          <span class="mission-status status-${m.status}">${m.status.replace(/_/g, ' ')}</span>
-          <button class="mission-delete-btn" title="Delete mission">✕</button>
-        </div>
-        <div class="mission-item-meta">${m.mode} · ${m.altitude || '?'}m · ${passInfo} · ${d.toLocaleDateString()}</div>
-      `;
-      item.querySelector('.mission-delete-btn').addEventListener('click', e => {
+      const nameRow = document.createElement('div');
+      nameRow.className = 'mission-item-name';
+      nameRow.appendChild(document.createTextNode(m.name + ' '));
+
+      const statusChip = document.createElement('span');
+      statusChip.className = `mission-status status-${m.status}`;
+      statusChip.textContent = m.status.replace(/_/g, ' ');
+      nameRow.appendChild(statusChip);
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'mission-delete-btn';
+      delBtn.title = 'Delete mission';
+      delBtn.textContent = '✕';
+      delBtn.addEventListener('click', e => {
         e.stopPropagation();
         _deleteMission(m.id, m.name, m.passes_on_phone > 0);
       });
+      nameRow.appendChild(delBtn);
+
+      const metaRow = document.createElement('div');
+      metaRow.className = 'mission-item-meta';
+      metaRow.textContent = `${m.mode} · ${m.altitude || '?'}m · ${passInfo} · ${d.toLocaleDateString()}`;
+
+      item.appendChild(nameRow);
+      item.appendChild(metaRow);
 
       const flightsPanel = document.createElement('div');
       flightsPanel.className = 'mission-flights';
